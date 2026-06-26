@@ -1,0 +1,8 @@
+# MusicDL Web App Dependencies
+# @requires: Python >= 3.10
+# Install: pip install -r webapp/requirements.txt
+
+flask>=3.1.0,<4
+flask-cors>=5.0.1,<6
+requests>=2.32.5,<3
+pathvalidate>=3.3.1,<4

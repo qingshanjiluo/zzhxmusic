@@ -1,0 +1,1 @@
+cd /d "f:\工具\musicdl-master" && "C:\Users\Administrator\AppData\Local\Programs\Python\Python310\python.exe" musicdl_tui.py

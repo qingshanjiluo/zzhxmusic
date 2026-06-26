@@ -1,0 +1,72 @@
+name: 歌单下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      playlist_url:
+        description: '歌单链接（QQ音乐/网易云音乐等）'
+        required: true
+        type: string
+        default: 'https://y.qq.com/n/ryqq/playlist/123456789'
+      quality:
+        description: '音频质量'
+        required: true
+        type: choice
+        options:
+          - flac
+          - mp3
+          - ape
+          - wav
+        default: 'flac'
+      limit:
+        description: '下载数量限制 (1-100)'
+        required: true
+        type: number
+        default: 20
+      output_name:
+        description: '输出ZIP文件名前缀'
+        required: true
+        type: string
+        default: 'playlist_results'
+
+jobs:
+  download-playlist:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+    
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-optional.txt || true
+    
+    - name: 执行歌单下载
+      run: |
+        python musicdl_workflow.py \
+          --mode playlist \
+          --target "${{ inputs.playlist_url }}" \
+          --quality "${{ inputs.quality }}" \
+          --limit ${{ inputs.limit }} \
+          --output "${{ inputs.output_name }}"
+    
+    - name: 上传下载结果
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.output_name }}
+        path: ./*.zip
+        retention-days: 7
+    
+    - name: 清理临时文件
+      if: always()
+      run: |
+        rm -f ./*.zip
+        rm -rf ./musicdl_outputs/
