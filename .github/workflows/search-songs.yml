@@ -1,0 +1,95 @@
+name: 单曲搜索下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      songs:
+        description: '歌曲列表（每行一首，格式: "歌名 歌手"）'
+        required: true
+        type: string
+        default: |
+          七里香 周杰伦
+          夜曲 周杰伦
+      quality:
+        description: '音质'
+        required: false
+        type: choice
+        default: 'flac'
+        options:
+          - flac
+          - mp3
+          - ape
+          - wav
+          - aac
+      max_results:
+        description: '每首歌曲最多搜索结果数'
+        required: false
+        type: number
+        default: 3
+
+jobs:
+  download-songs:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create song list file
+      run: |
+        echo "${{ github.event.inputs.songs }}" > songs.txt
+        echo "歌曲列表:"
+        cat songs.txt
+    
+    - name: Run batch downloader
+      run: |
+        python src/batch_downloader.py --file songs.txt --quality ${{ github.event.inputs.quality }} --workers 3 --output ./downloads
+    
+    - name: List downloaded files
+      run: |
+        echo "下载的文件:"
+        find ./downloads -type f -name "*.flac" -o -name "*.mp3" -o -name "*.ape" -o -name "*.wav" -o -name "*.aac" | head -20
+        echo ""
+        echo "文件总数:"
+        find ./downloads -type f \( -name "*.flac" -o -name "*.mp3" -o -name "*.ape" -o -name "*.wav" -o -name "*.aac" \) | wc -l
+    
+    - name: Package downloads
+      run: |
+        if [ -d ./downloads ] && [ "$(ls -A ./downloads 2>/dev/null)" ]; then
+          zip -r songs-download.zip ./downloads
+          echo "ZIP 创建成功"
+        else
+          echo "没有下载到任何文件"
+          echo "NO_FILES=true" >> $GITHUB_ENV
+        fi
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: songs-download
+        path: songs-download.zip
+        if-no-files-found: warn
+    
+    - name: Summary
+      run: |
+        echo "##  下载完成" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| 项目 | 详情 |" >> $GITHUB_STEP_SUMMARY
+        echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+        echo "| 音质 | ${{ github.event.inputs.quality }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 歌曲数量 | $(cat songs.txt | wc -l) |" >> $GITHUB_STEP_SUMMARY
+        if [ -f songs-download.zip ]; then
+          echo "| ZIP 大小 | $(du -h songs-download.zip | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo " 下载 ZIP 文件: 在 Artifacts 区域下载" >> $GITHUB_STEP_SUMMARY

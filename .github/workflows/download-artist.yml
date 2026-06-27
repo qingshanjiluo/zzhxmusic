@@ -1,0 +1,88 @@
+name: 歌手下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      artist_name:
+        description: '歌手名称'
+        required: true
+        type: string
+        default: '周杰伦'
+      quality:
+        description: '音质'
+        required: false
+        type: choice
+        default: 'flac'
+        options:
+          - flac
+          - mp3
+          - ape
+          - wav
+          - aac
+      max_songs:
+        description: '最多下载歌曲数'
+        required: false
+        type: number
+        default: 30
+
+jobs:
+  download-artist:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run batch downloader for artist
+      run: |
+        python src/batch_downloader.py --artist "${{ github.event.inputs.artist_name }}" --quality ${{ github.event.inputs.quality }} --workers 3 --output ./downloads --limit ${{ github.event.inputs.max_songs }}
+    
+    - name: List downloaded files
+      run: |
+        echo "下载的文件:"
+        find ./downloads -type f -name "*.flac" -o -name "*.mp3" -o -name "*.ape" -o -name "*.wav" -o -name "*.aac" | head -20
+        echo ""
+        echo "文件总数:"
+        find ./downloads -type f \( -name "*.flac" -o -name "*.mp3" -o -name "*.ape" -o -name "*.wav" -o -name "*.aac" \) | wc -l
+    
+    - name: Package downloads
+      run: |
+        if [ -d ./downloads ] && [ "$(ls -A ./downloads 2>/dev/null)" ]; then
+          zip -r artist-download.zip ./downloads
+          echo "ZIP 创建成功"
+        else
+          echo "没有下载到任何文件"
+          echo "NO_FILES=true" >> $GITHUB_ENV
+        fi
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: artist-download
+        path: artist-download.zip
+        if-no-files-found: warn
+    
+    - name: Summary
+      run: |
+        echo "##  下载完成" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| 项目 | 详情 |" >> $GITHUB_STEP_SUMMARY
+        echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+        echo "| 歌手 | ${{ github.event.inputs.artist_name }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 音质 | ${{ github.event.inputs.quality }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 限制数量 | ${{ github.event.inputs.max_songs }} |" >> $GITHUB_STEP_SUMMARY
+        if [ -f artist-download.zip ]; then
+          echo "| ZIP 大小 | $(du -h artist-download.zip | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo " 下载 ZIP 文件: 在 Artifacts 区域下载" >> $GITHUB_STEP_SUMMARY

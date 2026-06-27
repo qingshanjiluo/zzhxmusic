@@ -1,0 +1,92 @@
+name: 歌单下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      playlist_url:
+        description: '歌单 URL（支持网易云、QQ音乐等平台）'
+        required: true
+        type: string
+        default: 'https://music.163.com/playlist?id=123456'
+      quality:
+        description: '音质'
+        required: false
+        type: choice
+        default: 'flac'
+        options:
+          - flac
+          - mp3
+          - ape
+          - wav
+          - aac
+      max_results:
+        description: '每首歌曲最多搜索结果数'
+        required: false
+        type: number
+        default: 3
+
+jobs:
+  download-playlist:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Parse playlist URL
+      run: |
+        echo "PLAYLIST_URL=${{ github.event.inputs.playlist_url }}" >> $GITHUB_ENV
+        echo "歌单 URL: ${{ github.event.inputs.playlist_url }}"
+    
+    - name: Run batch downloader with playlist
+      run: |
+        python src/batch_downloader.py --playlist "$PLAYLIST_URL" --quality ${{ github.event.inputs.quality }} --workers 3 --output ./downloads
+    
+    - name: List downloaded files
+      run: |
+        echo "下载的文件:"
+        find ./downloads -type f -name "*.flac" -o -name "*.mp3" -o -name "*.ape" -o -name "*.wav" -o -name "*.aac" | head -20
+        echo ""
+        echo "文件总数:"
+        find ./downloads -type f \( -name "*.flac" -o -name "*.mp3" -o -name "*.ape" -o -name "*.wav" -o -name "*.aac" \) | wc -l
+    
+    - name: Package downloads
+      run: |
+        if [ -d ./downloads ] && [ "$(ls -A ./downloads 2>/dev/null)" ]; then
+          zip -r playlist-download.zip ./downloads
+          echo "ZIP 创建成功"
+        else
+          echo "没有下载到任何文件"
+          echo "NO_FILES=true" >> $GITHUB_ENV
+        fi
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: playlist-download
+        path: playlist-download.zip
+        if-no-files-found: warn
+    
+    - name: Summary
+      run: |
+        echo "##  下载完成" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| 项目 | 详情 |" >> $GITHUB_STEP_SUMMARY
+        echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+        echo "| 歌单 | ${{ github.event.inputs.playlist_url }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 音质 | ${{ github.event.inputs.quality }} |" >> $GITHUB_STEP_SUMMARY
+        if [ -f playlist-download.zip ]; then
+          echo "| ZIP 大小 | $(du -h playlist-download.zip | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo " 下载 ZIP 文件: 在 Artifacts 区域下载" >> $GITHUB_STEP_SUMMARY
