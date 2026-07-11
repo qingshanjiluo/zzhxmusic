@@ -91,7 +91,8 @@ class SmartDownloader:
     def __init__(self, source: str = 'QQMusicClient', quality: str = 'flac',
                  max_workers: int = 10, retry_count: int = 2,
                  filename_template: str = '',
-                 no_lyrics: bool = False, no_cover: bool = False):
+                 no_lyrics: bool = False, no_cover: bool = False,
+                 unlimited_format: bool = False):
         """
         初始化下载器
         Args:
@@ -102,6 +103,7 @@ class SmartDownloader:
             filename_template: 文件命名模板（空=使用默认）
             no_lyrics: 不下载歌词
             no_cover: 不下载封面
+            unlimited_format: 不限格式，接受任何文件扩展名
         """
         self.primary_source = source
         self.quality = quality
@@ -110,6 +112,7 @@ class SmartDownloader:
         self.filename_template = filename_template
         self.no_lyrics = no_lyrics
         self.no_cover = no_cover
+        self.unlimited_format = unlimited_format
         self.client = None
         self.SOURCE_CIRCUIT_BREAKER_THRESHOLD = 3  # 源级熔断：连续失败 N 次后跳过该源
         self.source_failures: Dict[str, int] = {}  # 每个源的连续失败次数
@@ -122,6 +125,8 @@ class SmartDownloader:
         }
         self.quality_fallback_list = self.QUALITY_FALLBACK.get(quality, ['mp3', 'auto'])
         self._file_index = 0  # 文件序号计数器
+        # 不限格式时，允许所有常见音频后缀 + 任何后缀
+        self._valid_exts = None  # None = 不限格式
         self._init_client()
 
     def _init_client(self):
@@ -322,10 +327,13 @@ class SmartDownloader:
     def search_best_match(self, title: str, artist: str = '') -> Optional[Dict]:
         """
         搜索最佳匹配，支持关键词变体
+        所有音源并行搜索，取最快返回的匹配结果
         """
         keywords = self._generate_search_keywords(title, artist)
+        total_kw = len(keywords)
 
-        for keyword in keywords:
+        for kw_idx, keyword in enumerate(keywords, 1):
+            print(f"  ├─ [{kw_idx}/{total_kw}] 搜索 '{keyword}'...")
             result = self._search_single_keyword(keyword, title, artist)
             if result:
                 return result
@@ -333,37 +341,49 @@ class SmartDownloader:
         return None
 
     def _search_single_keyword(self, keyword: str, title: str, artist: str) -> Optional[Dict]:
-        """使用单个关键词在多个音源中搜索"""
+        """使用单个关键词在多个音源中**并行**搜索，最快返回的匹配结果优先"""
         if not self._client_ready():
-            print(f"  ├─ client 未就绪，无法搜索 '{keyword}'")
+            print(f"  │  client 未就绪，无法搜索 '{keyword}'")
             return None
 
         search_sources = self._filter_available_sources(self._get_search_sources())
         if not search_sources:
-            print(f"  ├─ 没有可用音源，无法搜索 '{keyword}'")
+            print(f"  │  没有可用音源，无法搜索 '{keyword}'")
             return None
 
-        print(f"  ├─ 搜索 '{keyword}'...")
+        print(f"  │  并行搜索 {len(search_sources)} 个音源...")
 
-        for source in search_sources:
+        results_queue: List[Optional[Dict]] = []
 
+        def _search_on_source(source: str) -> Optional[Dict]:
+            """单个音源搜索（用于线程池）"""
             try:
-                results = self.client.music_clients[source].search(
+                sr = self.client.music_clients[source].search(
                     keyword=keyword,
-                    num_threadings=3
+                    num_threadings=2
                 )
-            except Exception as e:
-                print(f"  │  └─ {source} 搜索出错: {e}")
-                continue
+                if not sr:
+                    return None
+                best = self._find_best_match(sr, title, artist)
+                if best:
+                    best['source'] = source
+                    return best
+                return None
+            except Exception:
+                return None
 
-            if not results:
-                continue
-
-            best = self._find_best_match(results, title, artist)
-            if best:
-                print(f"  │  └─ ✓ {source}: 找到匹配 → {best.get('song_name', '')} - {best.get('singers', '')}")
-                best['source'] = source
-                return best
+        with ThreadPoolExecutor(max_workers=len(search_sources)) as pool:
+            fut_map = {pool.submit(_search_on_source, s): s for s in search_sources}
+            for fut in as_completed(fut_map):
+                res = fut.result()
+                if res is not None:
+                    # 找到匹配，取消其他未完成的任务
+                    for o in fut_map:
+                        if not o.done():
+                            o.cancel()
+                    src = res['source']
+                    print(f"  │  └─ ✓ {src}: 找到匹配 → {res.get('song_name', '')} - {res.get('singers', '')}")
+                    return res
 
         return None
 
@@ -557,9 +577,13 @@ class SmartDownloader:
                     if not save_path:
                         if Path(output_dir).exists():
                             for f in Path(output_dir).iterdir():
-                                if f.is_file() and f.suffix in ['.mp3', '.flac', '.ape', '.wav', '.aac', '.m4a', '.ogg']:
-                                    save_path = str(f)
-                                    break
+                                if f.is_file():
+                                    if self.unlimited_format:
+                                        save_path = str(f)
+                                        break
+                                    elif f.suffix in ['.mp3', '.flac', '.ape', '.wav', '.aac', '.m4a', '.ogg']:
+                                        save_path = str(f)
+                                        break
 
                     if save_path:
                         # 成功：重置该源的熔断计数
@@ -738,7 +762,10 @@ class SmartDownloader:
     def package_downloads(self, output_dir: str) -> Optional[str]:
         """将下载的文件打包为 ZIP"""
         files = list(Path(output_dir).iterdir())
-        audio_files = [f for f in files if f.is_file() and f.suffix in ['.mp3', '.flac', '.ape', '.wav', '.aac', '.m4a', '.ogg']]
+        if self.unlimited_format:
+            audio_files = [f for f in files if f.is_file()]
+        else:
+            audio_files = [f for f in files if f.is_file() and f.suffix in ['.mp3', '.flac', '.ape', '.wav', '.aac', '.m4a', '.ogg']]
         if not audio_files:
             print("  没有音频文件可打包")
             return None
@@ -793,6 +820,7 @@ def main():
   %(prog)s --file songs.txt --range 3,8
   %(prog)s --file songs.txt --chinese-only
   %(prog)s --file songs.txt --filename-template "{index}. {title} - {artist}"
+  %(prog)s --file songs.txt --unlimited-format
         '''
     )
     parser.add_argument('--file', '-f', type=str, help='歌曲列表文件路径')
@@ -830,6 +858,8 @@ def main():
                         help='只下载歌名含中文的歌曲')
     parser.add_argument('--no-chinese', action='store_true',
                         help='只下载歌名不含中文的歌曲')
+    parser.add_argument('--unlimited-format', action='store_true',
+                        help='不限格式，接受任何文件扩展名（默认只接受 mp3/flac/ape/wav 等）')
 
     args = parser.parse_args()
 
@@ -839,20 +869,23 @@ def main():
         downloader = SmartDownloader(source=args.source, quality=args.quality,
                                      max_workers=args.workers, retry_count=args.retry,
                                      filename_template=args.filename_template,
-                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover)
+                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover,
+                                     unlimited_format=args.unlimited_format)
         songs = downloader.load_songs_from_file(args.file)
     elif args.text:
         downloader = SmartDownloader(source=args.source, quality=args.quality,
                                      max_workers=args.workers, retry_count=args.retry,
                                      filename_template=args.filename_template,
-                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover)
+                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover,
+                                     unlimited_format=args.unlimited_format)
         songs = downloader.load_songs_from_text(args.text.replace('\\n', '\n'))
     elif args.playlist_url:
         # 先用空参数初始化，再解析歌单
         downloader = SmartDownloader(source=args.source, quality=args.quality,
                                      max_workers=args.workers, retry_count=args.retry,
                                      filename_template=args.filename_template,
-                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover)
+                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover,
+                                     unlimited_format=args.unlimited_format)
         songs = downloader.parse_playlist(args.playlist_url)
         if not songs:
             print("错误: 无法从歌单 URL 解析到任何歌曲")
