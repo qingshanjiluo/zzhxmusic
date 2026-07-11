@@ -2,6 +2,7 @@
 downloads/
 *.zip
 download-report.md
+charts-report.md
 
 # Python
 __pycache__/

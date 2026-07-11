@@ -94,21 +94,46 @@ TOP_CHARTS_ALIASES = {
 }
 
 
-def list_top_charts():
-    """列出所有可用的排行榜（模块级函数，不依赖 musicdl）"""
+SOURCE_NAMES = {
+    'QQ': 'QQ音乐', 'Netease': '网易云音乐',
+}
+
+
+def list_top_charts(source: str = ''):
+    """列出所有可用的排行榜（模块级函数，不依赖 musicdl）
+
+    Args:
+        source: 音源名称，如 'QQ' / 'Netease' / 'Kuwo' / 'Kugou' / 'Migu'
+                空字符串列出所有音源的榜单
+    """
     print(f"\n{'='*60}")
-    print(f"  可用排行榜列表")
+    title = '可用排行榜列表'
+    if source:
+        title = f'{source}音乐 - {title}'
+    print(f"  {title}")
     print(f"{'='*60}")
-    groups = {'QQ音乐': [], '网易云音乐': []}
-    for key, info in TOP_CHARTS.items():
-        if info['source'] == 'QQ':
-            groups['QQ音乐'].append((key, info['name']))
-        else:
-            groups['网易云音乐'].append((key, info['name']))
-    for group, items in groups.items():
-        print(f"\n  {group}:")
+
+
+    if source:
+        # 只列出指定音源的榜单
+        items = []
+        for key, info in TOP_CHARTS.items():
+            if info['source'] == source:
+                items.append((key, info['name']))
+        display_name = SOURCE_NAMES.get(source, source)
+        print(f"\n  {display_name}:")
         for key, name in items:
             print(f"    {key:20s}  {name}")
+    else:
+        # 按音源分组展示全部
+        group_order = ['QQ', 'Netease']
+        for src in group_order:
+            items = [(k, v['name']) for k, v in TOP_CHARTS.items() if v['source'] == src]
+            if items:
+                display_name = SOURCE_NAMES.get(src, src)
+                print(f"\n  {display_name}:")
+                for key, name in items:
+                    print(f"    {key:20s}  {name}")
     print()
 
 
@@ -267,9 +292,13 @@ class SmartDownloader:
 
     # ========== 排行榜获取 ==========
 
-    def list_top_charts(self):
-        """列出所有可用的排行榜（委托模块级函数）"""
-        list_top_charts()
+    def list_top_charts(self, source: str = ''):
+        """列出所有可用的排行榜（委托模块级函数）
+
+        Args:
+            source: 音源名称过滤，如 'QQ' / 'Netease'，空字符串列出全部
+        """
+        list_top_charts(source=source)
 
     def get_top_chart(self, chart_key: str, limit: int = 0) -> List[Dict[str, str]]:
         """
@@ -1002,6 +1031,8 @@ def main():
                         help='下载指定排行榜（如 qq_hot, netease_new, 热歌榜），使用 --list-top-charts 查看可用榜单')
     parser.add_argument('--list-top-charts', action='store_true',
                         help='列出所有可用的排行榜')
+    parser.add_argument('--source-charts', type=str, default='',
+                        help='按音源列出榜单，如 QQ / Netease；留空则列出全部')
     parser.add_argument('--chart-limit', type=int, default=0,
                         help='排行榜模式下限制获取的歌曲数量（0=全部）')
 
@@ -1010,6 +1041,9 @@ def main():
     # 先处理纯展示模式（不涉及下载，不需要 musicdl）
     if args.list_top_charts:
         list_top_charts()
+        sys.exit(0)
+    if args.source_charts:
+        list_top_charts(source=args.source_charts.strip())
         sys.exit(0)
 
     # 收集歌曲
