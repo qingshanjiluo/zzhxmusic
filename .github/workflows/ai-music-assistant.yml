@@ -1,4 +1,4 @@
-name: 🤖 AI 智能音乐助手
+name: AI 智能音乐助手（browser-act 搜索）
 
 on:
   workflow_dispatch:
@@ -62,10 +62,13 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: 📦 安装依赖
+    - name: 📦 安装依赖（含 browser-act）
       run: |
         python -m pip install --upgrade pip
         pip install -r batch-music-downloader/requirements.txt
+        # 安装 browser-act（无头浏览器搜索，替代 SerpAPI）
+        pip install browser-act-cli
+        echo "browser-act 已安装"
 
     - name: 🤖 显示任务参数
       run: |
@@ -82,19 +85,19 @@ jobs:
 
         # API 密钥检查（使用仓库 secrets，需要在仓库 Settings > Secrets and variables 中配置）
         if [ -n "${{ secrets.DEEPSEEK_API_KEY }}" ]; then
-          echo "✅ DeepSeek API: 已配置"
+          echo "[OK] DeepSeek API: 已配置"
         else
-          echo "⚠️ DeepSeek API: 未配置（纯规则模式）"
+          echo "[!] DeepSeek API: 未配置（纯规则模式）"
         fi
         if [ -n "${{ secrets.OPENAI_API_KEY }}" ]; then
-          echo "✅ OpenAI API: 已配置"
+          echo "[OK] OpenAI API: 已配置"
         else
-          echo "⚠️ OpenAI API: 未配置（纯规则模式）"
+          echo "[!] OpenAI API: 未配置（纯规则模式）"
         fi
-        if [ -n "${{ secrets.SERPAPI_KEY }}" ]; then
-          echo "✅ SerpAPI: 已配置（增强网络搜索）"
+        if [ -n "${{ secrets.BROWSERACT_API_KEY }}" ]; then
+          echo "[OK] BrowserAct API: 已配置（stealth 浏览器搜索）"
         else
-          echo "ℹ️ SerpAPI: 未配置（使用 DuckDuckGo 免费搜索）"
+          echo "[i] BrowserAct API: 未配置（使用 chrome 模式搜索，无需 key）"
         fi
 
     - name: 🤖 运行 AI 智能音乐助手
@@ -102,7 +105,7 @@ jobs:
       env:
         DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+        BROWSERACT_API_KEY: ${{ secrets.BROWSERACT_API_KEY }}
       run: |
         cd batch-music-downloader
 
@@ -121,8 +124,8 @@ jobs:
           CMD="$CMD --openai-key \"$OPENAI_API_KEY\""
         fi
 
-        if [ -n "$SERPAPI_KEY" ]; then
-          CMD="$CMD --serpapi-key \"$SERPAPI_KEY\""
+        if [ -n "$BROWSERACT_API_KEY" ]; then
+          CMD="$CMD --browseract-key \"$BROWSERACT_API_KEY\""
         fi
 
         # 仅发现模式

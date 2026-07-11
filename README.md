@@ -122,7 +122,7 @@ batch-music-downloader/
 
 ## 🐙 GitHub Actions 使用
 
-### 1. AI 智能助手工作流（推荐）
+### 1. AI 智能助手工作流（推荐，browser-act 搜索）
 
 进入 **Actions** → **🤖 AI 智能音乐助手** → **Run workflow**
 
@@ -158,7 +158,12 @@ batch-music-downloader/
 |-------------|------|------|
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥（推荐） | 否 |
 | `OPENAI_API_KEY` | OpenAI API 密钥 | 否 |
-| `SERPAPI_KEY` | SerpAPI 密钥（增强搜索） | 否 |
+| `BROWSERACT_API_KEY` | BrowserAct API key（免费注册，用于 stealth 浏览器搜索） | 否 |
+
+> **关于搜索**: 默认使用 `browser-act` chrome 模式搜索 Google（无需任何 API key）。
+> 如果注册 BrowserAct 并设置 `BROWSERACT_API_KEY`，将自动启用 stealth-extract 模式，
+> 可突破反爬虫机制搜索 Google/Bing 等引擎。
+> SerpAPI 已不再需要使用。
 
 ---
 
@@ -217,7 +222,8 @@ python src/ai_assistant.py --task "搜索最近流行的英文歌曲" --no-downl
 |------|------|
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥 |
 | `OPENAI_API_KEY` | OpenAI API 密钥 |
-| `SERPAPI_KEY` | SerpAPI 密钥 |
+| `BROWSERACT_API_KEY` | BrowserAct API key（免费注册，用于 stealth 浏览器搜索） |
+| `SERPAPI_KEY` | （保留向后兼容）SerpAPI 密钥，已不推荐使用 |
 | `GOOGLE_API_KEY` | Google Custom Search API 密钥 |
 | `GOOGLE_CSE_ID` | Google Custom Search Engine ID |
 | `BING_API_KEY` | Bing Search API 密钥 |
@@ -233,5 +239,6 @@ python src/ai_assistant.py --task "搜索最近流行的英文歌曲" --no-downl
 - **Python 3.11+**
 - [musicdl](https://github.com/CharlesPikachu/musicdl) - 多音源音乐搜索下载库
 - **GitHub Actions** - 持续集成/自动化运行
-- **DuckDuckGo / SerpAPI** - 网络搜索
+- **browser-act** - 无头浏览器搜索（Google/Bing，无需 API key）
+- **DuckDuckGo** - 零配置搜索后备
 - **DeepSeek / OpenAI API** - AI 增强理解（可选）

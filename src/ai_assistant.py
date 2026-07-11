@@ -18,7 +18,8 @@ GitHub Actions 用法:
 
 API 密钥说明:
   - OPENAI_API_KEY / DEEPSEEK_API_KEY: 用于 AI 理解任务（可选，也支持纯规则模式）
-  - SERPAPI_KEY: 用于网络搜索（可选，不用则使用 DuckDuckGo 免费搜索）
+  - BROWSERACT_API_KEY: 用于 browser-act stealth 模式搜索（可选，免费注册 https://www.browseract.com）
+  - SERPAPI_KEY: 用于 SerpAPI 付费搜索（可选，完全不需要，browser-act 免费即可用）
 """
 
 import os
@@ -106,10 +107,11 @@ class AIAssistant:
     支持纯规则模式（无 LLM API）和 AI 增强模式（有 LLM API）
     """
 
-    def __init__(self, 
+    def __init__(self,
                  openai_api_key: str = '',
                  deepseek_api_key: str = '',
                  serpapi_key: str = '',
+                 browseract_api_key: str = '',
                  model: str = 'deepseek-chat'):
         """
         初始化 AI 助手
@@ -117,16 +119,22 @@ class AIAssistant:
         Args:
             openai_api_key: OpenAI API 密钥（可选）
             deepseek_api_key: DeepSeek API 密钥（可选，优先使用）
-            serpapi_key: SerpAPI 密钥（可选）
+            serpapi_key: SerpAPI 密钥（可选，已不再推荐，保留向后兼容）
+            browseract_api_key: BrowserAct API key（可选，免费注册 https://www.browseract.com）
+                                 用于 stealth 模式搜索。不设置时自动使用 chrome 模式（无需 key）
             model: 使用的 AI 模型名
         """
         self.openai_api_key = openai_api_key or os.environ.get('OPENAI_API_KEY', '')
         self.deepseek_api_key = deepseek_api_key or os.environ.get('DEEPSEEK_API_KEY', '')
         self.serpapi_key = serpapi_key or os.environ.get('SERPAPI_KEY', '')
+        self.browseract_api_key = browseract_api_key or os.environ.get('BROWSERACT_API_KEY', '')
         self.model = model
 
         # 子模块
-        self.search = SearchTools(serpapi_key=self.serpapi_key)
+        self.search = SearchTools(
+            serpapi_key=self.serpapi_key,
+            browseract_api_key=self.browseract_api_key
+        )
         self.discovery = MusicDiscovery(search_tools=self.search)
 
         # 是否启用 AI 增强
@@ -622,7 +630,10 @@ def main():
     parser.add_argument('--deepseek-key', type=str, default='',
                         help='DeepSeek API 密钥')
     parser.add_argument('--serpapi-key', type=str, default='',
-                        help='SerpAPI 密钥')
+                        help='SerpAPI 密钥（已不推荐，保留向后兼容）')
+    parser.add_argument('--browseract-key', type=str, default='',
+                        help='BrowserAct API key（免费注册 https://www.browseract.com，'
+                             '用于 stealth 浏览器搜索；不设置则自动使用 chrome 模式无需 key）')
     parser.add_argument('--model', type=str, default='deepseek-chat',
                         help='AI 模型名')
 
@@ -679,6 +690,7 @@ def main():
         openai_api_key=args.openai_key,
         deepseek_api_key=args.deepseek_key,
         serpapi_key=args.serpapi_key,
+        browseract_api_key=args.browseract_key,
         model=args.model,
     )
 
