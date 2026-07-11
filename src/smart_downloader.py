@@ -70,7 +70,6 @@ class SmartDownloader:
         'MiguMusicClient',
         'QianqianMusicClient',
         'SoundCloudClient',
-        'YouTubeMusicClient',
     ]
 
     # 音质回退链：首选音质 -> 回退音质列表
@@ -129,8 +128,12 @@ class SmartDownloader:
                 }
             )
         except Exception as e:
-            print(f"警告: musicdl 初始化部分音源失败: {e}")
+            print(f"警告: musicdl 初始化失败: {e}")
             print("部分音源可能不可用，将自动跳过")
+
+    def _client_ready(self) -> bool:
+        """检查 client 是否可用，不抛异常"""
+        return self.client is not None and hasattr(self.client, 'music_clients') and self.client.music_clients is not None
 
     def _get_search_sources(self) -> List[str]:
         sources = [self.primary_source]
@@ -138,6 +141,16 @@ class SmartDownloader:
             if src != self.primary_source:
                 sources.append(src)
         return sources
+
+    def _filter_available_sources(self, sources: List[str]) -> List[str]:
+        """过滤掉 client 中不可用的音源"""
+        if not self._client_ready():
+            return []
+        available = []
+        for s in sources:
+            if s in self.client.music_clients:
+                available.append(s)
+        return available
 
     # ========== 输入解析 ==========
 
@@ -320,12 +333,18 @@ class SmartDownloader:
 
     def _search_single_keyword(self, keyword: str, title: str, artist: str) -> Optional[Dict]:
         """使用单个关键词在多个音源中搜索"""
-        search_sources = self._get_search_sources()
+        if not self._client_ready():
+            print(f"  ├─ client 未就绪，无法搜索 '{keyword}'")
+            return None
+
+        search_sources = self._filter_available_sources(self._get_search_sources())
+        if not search_sources:
+            print(f"  ├─ 没有可用音源，无法搜索 '{keyword}'")
+            return None
+
         print(f"  ├─ 搜索 '{keyword}'...")
 
         for source in search_sources:
-            if source not in self.client.music_clients:
-                continue
 
             try:
                 results = self.client.music_clients[source].search(
@@ -487,9 +506,16 @@ class SmartDownloader:
         print(f"    [DEBUG] download_song_with_retry: title='{song_title}' source_chain={source_chain} quality_chain={quality_chain}")
         print(f"    [DEBUG]   源熔断状态: {dict(self.source_failures)}")
 
-        for source in source_chain:
-            if source not in self.client.music_clients:
-                continue
+        if not self._client_ready():
+            print(f"    [DEBUG]   client 未就绪，无法下载")
+            return None
+
+        available_sources = self._filter_available_sources(source_chain)
+        if not available_sources:
+            print(f"    [DEBUG]   没有可用音源，无法下载")
+            return None
+
+        for source in available_sources:
 
             # ===== 源级熔断检查 =====
             src_fails = self.source_failures.get(source, 0)
