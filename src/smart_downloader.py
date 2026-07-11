@@ -43,11 +43,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 try:
-    from musicdl import musicdl
+    # 注意: 本地 musicdl/ 目录会遮蔽 pip 包，必须从 musicdl.musicdl 导入
+    from musicdl.musicdl import MusicClient
 except ImportError:
-    print("错误: 未安装 musicdl")
-    print("请运行: pip install musicdl")
-    sys.exit(1)
+    # 回退：如果本地目录不存在，尝试 pip 包路径
+    try:
+        from musicdl import musicdl as _musicdl_mod
+        MusicClient = _musicdl_mod.MusicClient
+    except (ImportError, AttributeError):
+        print("错误: 未安装 musicdl")
+        print("请运行: pip install musicdl")
+        sys.exit(1)
 
 try:
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -119,14 +125,9 @@ class SmartDownloader:
         self._init_client()
 
     def _init_client(self):
-        """初始化 musicdl 客户端（懒加载，用到时才初始化具体音源）"""
+        """初始化 musicdl 客户端"""
         try:
-            self.client = musicdl.musicdl(
-                config={
-                    'search_size_per_source': 10,
-                    'search_size_per_page': 10,
-                }
-            )
+            self.client = MusicClient()
         except Exception as e:
             print(f"警告: musicdl 初始化失败: {e}")
             print("部分音源可能不可用，将自动跳过")
