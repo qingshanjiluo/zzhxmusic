@@ -1,0 +1,15 @@
+# 下载文件
+downloads/
+*.zip
+download-report.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# 系统
+.DS_Store
+Thumbs.db
