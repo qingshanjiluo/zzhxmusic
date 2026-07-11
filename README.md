@@ -23,7 +23,7 @@
 | 参数 | 说明 |
 |------|------|
 | 输入来源 | file（读 song-queue.txt）或 manual（手动输入） |
-| 歌曲列表 | manual 模式时填写，每行一首，格式: `歌名, 歌手` |
+| 歌曲列表 | manual 模式时填写，用 `;` 分隔歌曲，用 `,` 分隔歌手，如: `七里香,周杰伦;稻香,周杰伦;童话,光良` |
 | 歌手筛选 | 可选，只下载指定歌手的歌曲 |
 | 首选音源 | QQMusicClient / NeteaseMusicClient / ... |
 | 音质 | flac / mp3 / ape / wav / aac |
@@ -38,8 +38,8 @@ pip install musicdl
 # 从 song-queue.txt 文件下载
 python src/smart_downloader.py --file song-queue.txt
 
-# 手动输入歌曲列表
-python src/smart_downloader.py --text "七里香, 周杰伦\n夜曲, 周杰伦"
+# 手动输入歌曲列表（;分隔歌曲，,分隔歌手）
+python src/smart_downloader.py --text "七里香,周杰伦;稻香,周杰伦;童话,光良"
 
 # 歌手筛选（只下载周杰伦的歌曲）
 python src/smart_downloader.py --file song-queue.txt --artist-filter "周杰伦"

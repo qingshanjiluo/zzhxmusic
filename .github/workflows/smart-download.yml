@@ -12,7 +12,7 @@ on:
           - file
           - manual
       songs_text:
-        description: '歌曲列表（manual 模式时填写，每行一首，格式: 歌名, 歌手）'
+        description: '歌曲列表（manual 模式时填写，用;分隔歌曲，用,分隔歌手，如: 七里香,周杰伦;稻香,周杰伦;童话,光良）'
         required: false
         type: string
         default: ''
@@ -92,22 +92,23 @@ jobs:
         echo ""
         echo "FILE_PATH=song-queue.txt" >> $GITHUB_ENV
 
-    - name: 写入歌曲列表（manual 模式）
+    - name: 显示歌曲列表（manual 模式）
       if: github.event.inputs.input_mode == 'manual'
       run: |
         echo "--- 手动输入的歌曲列表 ---"
         echo "${{ github.event.inputs.songs_text }}"
         echo "---"
-        echo "---" > manual_songs.txt
-        echo "${{ github.event.inputs.songs_text }}" >> manual_songs.txt
-        echo "FILE_PATH=manual_songs.txt" >> $GITHUB_ENV
+        echo "TEXT_INPUT=${{ github.event.inputs.songs_text }}" >> $GITHUB_ENV
 
     - name: 运行智能下载引擎
       id: download
       run: |
-        cd batch-music-downloader
         CMD="python src/smart_downloader.py"
-        CMD="$CMD --file ../${FILE_PATH}"
+        if [ "${{ github.event.inputs.input_mode }}" = "file" ]; then
+          CMD="$CMD --file song-queue.txt"
+        else
+          CMD="$CMD --text '${TEXT_INPUT}'"
+        fi
         CMD="$CMD --source ${{ github.event.inputs.source }}"
         CMD="$CMD --quality ${{ github.event.inputs.quality }}"
         CMD="$CMD --workers ${{ github.event.inputs.max_workers }}"
@@ -122,19 +123,18 @@ jobs:
     - name: 列出下载文件
       run: |
         echo "--- 下载的文件 ---"
-        if [ -d "batch-music-downloader/downloads" ]; then
-          find batch-music-downloader/downloads -type f | head -30
+        if [ -d "downloads" ]; then
+          find downloads -type f | head -30
           echo ""
           echo "文件总数:"
-          find batch-music-downloader/downloads -type f | wc -l
+          find downloads -type f | wc -l
         else
           echo "无下载文件"
         fi
 
     - name: 打包下载文件
       run: |
-        if [ -d "batch-music-downloader/downloads" ]; then
-          cd batch-music-downloader
+        if [ -d "downloads" ]; then
           zip -r songs-download.zip downloads/
           echo "ZIP 打包完成"
           ls -lh songs-download.zip
@@ -147,5 +147,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: songs-download
-        path: batch-music-downloader/songs-download.zip
+        path: songs-download.zip
         if-no-files-found: warn

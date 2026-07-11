@@ -123,17 +123,21 @@ class SmartDownloader:
         return songs
 
     def load_songs_from_text(self, text: str) -> List[Dict[str, str]]:
+        """从文本加载歌曲列表，支持 ; 分隔多首，, 分隔歌名和歌手"""
         songs = []
-        for line_num, line in enumerate(text.strip().splitlines(), 1):
-            line = line.strip()
-            if not line or line.startswith('#'):
+        # 先按 ; 分割成多个条目（支持中英文分号）
+        for item in text.replace('；', ';').split(';'):
+            item = item.strip()
+            if not item or item.startswith('#'):
                 continue
-            if ',' in line:
-                parts = line.split(',', 1)
-            elif '\t' in line:
-                parts = line.split('\t', 1)
+            if ',' in item:
+                parts = item.split(',', 1)
+            elif '，' in item:
+                parts = item.split('，', 1)
+            elif '\t' in item:
+                parts = item.split('\t', 1)
             else:
-                parts = line.split(' ', 1)
+                parts = item.split(' ', 1)
             title = parts[0].strip()
             artist = parts[1].strip() if len(parts) > 1 else ''
             if not title:
@@ -382,7 +386,7 @@ class SmartDownloader:
 def main():
     parser = argparse.ArgumentParser(description='Smart Downloader - 智能音乐下载器')
     parser.add_argument('--file', '-f', type=str, default='', help='歌曲列表文件路径 (song-queue.txt)')
-    parser.add_argument('--text', '-t', type=str, default='', help='歌曲列表文本 (多行)')
+    parser.add_argument('--text', '-t', type=str, default='', help='歌曲列表文本 (用;分隔多首,用,分隔歌手, 如: 七里香,周杰伦;稻香,周杰伦)')
     parser.add_argument('--source', '-s', type=str, default='QQMusicClient',
                        help='首选音源 (默认: QQMusicClient)')
     parser.add_argument('--quality', '-q', type=str, default='flac',
