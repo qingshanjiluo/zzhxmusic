@@ -1,0 +1,147 @@
+name: 歌单下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      playlist_url:
+        description: '歌单 URL（支持网易云/QQ音乐等平台歌单链接）'
+        required: true
+        type: string
+      source:
+        description: '首选音源'
+        required: true
+        type: choice
+        default: 'QQMusicClient'
+        options:
+          - QQMusicClient
+          - NeteaseMusicClient
+          - KuwoMusicClient
+          - KugouMusicClient
+          - MiguMusicClient
+      quality:
+        description: '音质'
+        required: true
+        type: choice
+        default: 'flac'
+        options:
+          - flac
+          - mp3
+          - ape
+          - wav
+          - aac
+      max_workers:
+        description: '并发下载数'
+        required: false
+        type: number
+        default: 5
+
+jobs:
+  playlist-download:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 显示歌单信息
+      run: |
+        echo "歌单 URL: ${{ github.event.inputs.playlist_url }}"
+        echo "首选音源: ${{ github.event.inputs.source }}"
+        echo "音质: ${{ github.event.inputs.quality }}"
+        echo "并发数: ${{ github.event.inputs.max_workers }}"
+
+    - name: 创建临时歌单下载脚本
+      run: |
+        cat > download_playlist.py << 'PYEOF'
+        #!/usr/bin/env python3
+        """歌单下载脚本 - 直接利用 batch_downloader 的 playlist 功能"""
+        import sys
+        import os
+        from pathlib import Path
+
+        sys.path.insert(0, 'batch-music-downloader')
+        from src.batch_downloader import BatchDownloader
+
+        playlist_url = "${{ github.event.inputs.playlist_url }}"
+        source = "${{ github.event.inputs.source }}"
+        quality = "${{ github.event.inputs.quality }}"
+        workers = ${{ github.event.inputs.max_workers }}
+        output_dir = "./down_playlist"
+
+        print(f"解析歌单: {playlist_url}")
+        downloader = BatchDownloader(sources=[source])
+        
+        songs = downloader.parse_playlist(playlist_url)
+        print(f"歌单共 {len(songs)} 首歌曲")
+        
+        if not songs:
+            print("未解析到任何歌曲")
+            sys.exit(1)
+
+        result = downloader.download_batch(songs, quality, workers, output_dir)
+        
+        print(f"\n下载完成: {result['downloaded_count']} 成功 / {result['failed_count']} 失败")
+        
+        # 生成报告
+        summary = []
+        summary.append("## 🎵 歌单下载报告\n")
+        summary.append(f"歌单: {playlist_url}\n")
+        summary.append("| 歌曲 | 歌手 | 状态 |")
+        summary.append("|------|------|------|")
+        for s in result['success']:
+            summary.append(f"| {s['title']} | {s['artist']} | ✅ |")
+        for s in result['failed']:
+            summary.append(f"| {s.get('title', '未知')} | {s.get('artist', '')} | ❌ |")
+        summary.append(f"\n✅ 成功: {result['downloaded_count']} | ❌ 失败: {result['failed_count']}")
+        
+        with open('playlist-report.md', 'w', encoding='utf-8') as f:
+            f.write('\n'.join(summary))
+        
+        github_summary = os.environ.get('GITHUB_STEP_SUMMARY')
+        if github_summary:
+            with open(github_summary, 'a', encoding='utf-8') as f:
+                f.write('\n'.join(summary))
+        PYEOF
+
+    - name: 运行歌单下载
+      run: python download_playlist.py
+
+    - name: 列出下载文件
+      run: |
+        echo "--- 下载的文件 ---"
+        if [ -d "down_playlist" ]; then
+          find down_playlist -type f | head -30
+          echo ""
+          echo "文件总数:"
+          find down_playlist -type f | wc -l
+        else
+          echo "无下载文件"
+        fi
+
+    - name: 打包下载文件
+      run: |
+        if [ -d "down_playlist" ] && [ "$(ls -A down_playlist 2>/dev/null)" ]; then
+          zip -r playlist-download.zip down_playlist/
+          echo "ZIP 打包完成"
+          ls -lh playlist-download.zip
+        else
+          echo "NO_FILES=true" >> $GITHUB_ENV
+          echo "没有需要打包的文件"
+        fi
+
+    - name: 上传 Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: playlist-download
+        path: playlist-download.zip
+        if-no-files-found: warn
