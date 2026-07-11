@@ -42,18 +42,19 @@ from typing import List, Dict, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+# musicdl 导入（可选，--list-top-charts 不需要它）
+MUSICDL_AVAILABLE = False
+MusicClient = None
 try:
-    # 注意: 本地 musicdl/ 目录会遮蔽 pip 包，必须从 musicdl.musicdl 导入
     from musicdl.musicdl import MusicClient
+    MUSICDL_AVAILABLE = True
 except ImportError:
-    # 回退：如果本地目录不存在，尝试 pip 包路径
     try:
         from musicdl import musicdl as _musicdl_mod
         MusicClient = _musicdl_mod.MusicClient
+        MUSICDL_AVAILABLE = True
     except (ImportError, AttributeError):
-        print("错误: 未安装 musicdl")
-        print("请运行: pip install musicdl")
-        sys.exit(1)
+        pass
 
 try:
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -62,6 +63,53 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
     print("提示: 安装 rich 可获得更好的进度条体验 (pip install rich)")
+
+
+# ========== 排行榜常量（模块级，不依赖 musicdl） ==========
+
+TOP_CHARTS = {
+    # QQ 音乐巅峰榜
+    'qq_hot':     {'name': 'QQ热歌榜',     'source': 'QQ', 'api': 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg',    'params': {'topid': 4, 'format': 'json'}},
+    'qq_new':     {'name': 'QQ新歌榜',     'source': 'QQ', 'api': 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg',    'params': {'topid': 27, 'format': 'json'}},
+    'qq_pop':     {'name': 'QQ流行榜',     'source': 'QQ', 'api': 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg',    'params': {'topid': 26, 'format': 'json'}},
+    'qq_mainland':{'name': 'QQ内地榜',     'source': 'QQ', 'api': 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg',    'params': {'topid': 5, 'format': 'json'}},
+    'qq_europe':  {'name': 'QQ欧美榜',     'source': 'QQ', 'api': 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg',    'params': {'topid': 3, 'format': 'json'}},
+    'qq_korea':   {'name': 'QQ韩国榜',     'source': 'QQ', 'api': 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg',    'params': {'topid': 16, 'format': 'json'}},
+    # 网易云音乐排行榜
+    'netease_hot':   {'name': '网易云热歌榜', 'source': 'Netease', 'api': 'https://music.163.com/api/playlist/detail',       'params': {'id': 3778678}},
+    'netease_new':   {'name': '网易云新歌榜', 'source': 'Netease', 'api': 'https://music.163.com/api/playlist/detail',       'params': {'id': 3779629}},
+    'netease_soar':  {'name': '网易云飙升榜', 'source': 'Netease', 'api': 'https://music.163.com/api/playlist/detail',       'params': {'id': 19723756}},
+    'netease_orig':  {'name': '网易云原创榜', 'source': 'Netease', 'api': 'https://music.163.com/api/playlist/detail',       'params': {'id': 2884035}},
+}
+
+TOP_CHARTS_ALIASES = {
+    '热歌榜': 'qq_hot',      'hot': 'qq_hot',
+    '新歌榜': 'qq_new',      'new': 'qq_new',
+    '流行榜': 'qq_pop',      'pop': 'qq_pop',
+    '内地榜': 'qq_mainland', '欧美榜': 'qq_europe',
+    '韩国榜': 'qq_korea',
+    '飙升榜': 'netease_soar', 'soar': 'netease_soar',
+    '原创榜': 'netease_orig', 'orig': 'netease_orig',
+    '网易云热歌榜': 'netease_hot', '网易云新歌榜': 'netease_new',
+}
+
+
+def list_top_charts():
+    """列出所有可用的排行榜（模块级函数，不依赖 musicdl）"""
+    print(f"\n{'='*60}")
+    print(f"  可用排行榜列表")
+    print(f"{'='*60}")
+    groups = {'QQ音乐': [], '网易云音乐': []}
+    for key, info in TOP_CHARTS.items():
+        if info['source'] == 'QQ':
+            groups['QQ音乐'].append((key, info['name']))
+        else:
+            groups['网易云音乐'].append((key, info['name']))
+    for group, items in groups.items():
+        print(f"\n  {group}:")
+        for key, name in items:
+            print(f"    {key:20s}  {name}")
+    print()
 
 
 class SmartDownloader:
@@ -131,6 +179,9 @@ class SmartDownloader:
 
     def _init_client(self):
         """初始化 musicdl 客户端"""
+        if not MUSICDL_AVAILABLE or MusicClient is None:
+            print("警告: musicdl 未安装，仅排行榜功能可用")
+            return
         try:
             self.client = MusicClient()
         except Exception as e:
@@ -212,6 +263,91 @@ class SmartDownloader:
             artist = parts[1].strip() if len(parts) > 1 else ''
             if title:
                 songs.append({'title': title, 'artist': artist})
+        return songs
+
+    # ========== 排行榜获取 ==========
+
+    def list_top_charts(self):
+        """列出所有可用的排行榜（委托模块级函数）"""
+        list_top_charts()
+
+    def get_top_chart(self, chart_key: str, limit: int = 0) -> List[Dict[str, str]]:
+        """
+        获取排行榜歌曲列表
+        Args:
+            chart_key: 排行榜键名（如 qq_hot, netease_new）或别名（如 热歌榜, hot）
+            limit: 限制返回数量（0=全部）
+        Returns:
+            歌曲列表 [{'title': str, 'artist': str}, ...]
+        """
+        # 别名解析
+        resolved = TOP_CHARTS_ALIASES.get(chart_key, chart_key)
+        chart_cfg = TOP_CHARTS.get(resolved)
+        if not chart_cfg:
+            print(f"错误: 未知排行榜 '{chart_key}'。使用 --list-top-charts 查看可用的排行榜。")
+            return []
+
+        songs = []
+        print(f"正在获取 {chart_cfg['name']}...")
+
+        try:
+            import requests
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://y.qq.com/' if chart_cfg['source'] == 'QQ' else 'https://music.163.com/',
+            }
+
+            resp = requests.get(chart_cfg['api'], params=chart_cfg['params'], headers=headers, timeout=15)
+            data = resp.json()
+
+            if chart_cfg['source'] == 'QQ':
+                # QQ 音乐榜：songlist[].data.songname / .singer[].name
+                songlist = data.get('songlist', [])
+                for item in songlist:
+                    sd = item.get('data', item)
+                    title = sd.get('songname', '') or sd.get('name', '')
+                    singers_raw = sd.get('singer', []) or sd.get('singers', [])
+                    artist = '/'.join([s.get('name', '') for s in singers_raw]) if singers_raw else ''
+                    if not title:
+                        title = sd.get('title', '') or sd.get('name', '')
+                    if title:
+                        songs.append({'title': title, 'artist': artist})
+            else:
+                # 网易云榜：result.tracks[].name / .artists[].name
+                tracks = data.get('result', {}).get('tracks', [])
+                for track in tracks:
+                    title = track.get('name', '')
+                    artists = '/'.join([a['name'] for a in track.get('artists', [])])
+                    if title:
+                        songs.append({'title': title, 'artist': artists})
+
+            # 去重
+            seen = set()
+            unique = []
+            for s in songs:
+                dedup_key = f"{s['title']}|{s['artist']}"
+                if dedup_key not in seen:
+                    seen.add(dedup_key)
+                    unique.append(s)
+            songs = unique
+
+            print(f"  获取到 {len(songs)} 首歌曲")
+
+            # 限制数量
+            if limit > 0 and len(songs) > limit:
+                songs = songs[:limit]
+                print(f"  限制取前 {limit} 首")
+
+            return songs
+
+        except requests.exceptions.Timeout:
+            print(f"  ❌ 请求超时: {chart_cfg['name']}")
+        except requests.exceptions.ConnectionError:
+            print(f"  ❌ 连接失败: {chart_cfg['name']}")
+        except Exception as e:
+            print(f"  ❌ 获取失败: {e}")
+
         return songs
 
     def parse_playlist(self, playlist_url: str) -> List[Dict[str, str]]:
@@ -333,7 +469,7 @@ class SmartDownloader:
         total_kw = len(keywords)
 
         for kw_idx, keyword in enumerate(keywords, 1):
-            print(f"  ├─ [{kw_idx}/{total_kw}] 搜索 '{keyword}'...")
+            print(f"  +-[{kw_idx}/{total_kw}] 搜索 '{keyword}'...")
             result = self._search_single_keyword(keyword, title, artist)
             if result:
                 return result
@@ -343,15 +479,15 @@ class SmartDownloader:
     def _search_single_keyword(self, keyword: str, title: str, artist: str) -> Optional[Dict]:
         """使用单个关键词在多个音源中**并行**搜索，最快返回的匹配结果优先"""
         if not self._client_ready():
-            print(f"  │  client 未就绪，无法搜索 '{keyword}'")
+            print(f"  |  client 未就绪，无法搜索 '{keyword}'")
             return None
 
         search_sources = self._filter_available_sources(self._get_search_sources())
         if not search_sources:
-            print(f"  │  没有可用音源，无法搜索 '{keyword}'")
+            print(f"  |  没有可用音源，无法搜索 '{keyword}'")
             return None
 
-        print(f"  │  并行搜索 {len(search_sources)} 个音源...")
+        print(f"  |  并行搜索 {len(search_sources)} 个音源...")
 
         results_queue: List[Optional[Dict]] = []
 
@@ -382,7 +518,7 @@ class SmartDownloader:
                         if not o.done():
                             o.cancel()
                     src = res['source']
-                    print(f"  │  └─ ✓ {src}: 找到匹配 → {res.get('song_name', '')} - {res.get('singers', '')}")
+                    print(f"  |  +- [OK] {src}: 找到匹配 -> {res.get('song_name', '')} - {res.get('singers', '')}")
                     return res
 
         return None
@@ -647,8 +783,8 @@ class SmartDownloader:
 
         # 阶段 1: 搜索 + 去重
         download_queue = []
-        print("▶ 阶段 1/3: 搜索匹配...")
-        print(f"{'─'*50}")
+        print("==> 阶段 1/3: 搜索匹配...")
+        print("-" * 50)
 
         if RICH_AVAILABLE:
             with Progress(
@@ -688,7 +824,7 @@ class SmartDownloader:
 
                 # 去重检查
                 if self.is_duplicate(title, artist):
-                    print(f"  └─ ⏭️ 已下载过，跳过（去重）")
+                    print(f"  -> 已下载过，跳过（去重）")
                     self.results['skipped'].append({'title': title, 'artist': artist})
                     continue
 
@@ -701,8 +837,8 @@ class SmartDownloader:
                 download_queue.append(best)
 
         # 阶段 2: 并发下载
-        print(f"\n▶ 阶段 2/3: 并发下载 ({len(download_queue)} 首)...")
-        print(f"{'─'*50}")
+        print(f"\n==> 阶段 2/3: 并发下载 ({len(download_queue)} 首)...")
+        print("-" * 50)
 
         if not download_queue:
             print("  没有需要下载的歌曲")
@@ -748,8 +884,8 @@ class SmartDownloader:
                         print(f"  ✗ {title} - {artist} 异常: {e}")
 
         # 阶段 3: 打包
-        print(f"\n▶ 阶段 3/3: 打包下载文件...")
-        print(f"{'─'*50}")
+        print(f"\n==> 阶段 3/3: 打包下载文件...")
+        print("-" * 50)
         zip_path = self.package_downloads(output_dir)
 
         # 生成报告
@@ -786,16 +922,16 @@ class SmartDownloader:
         print(f"\n{'='*60}")
         print(f"  下载报告")
         print(f"{'='*60}")
-        print(f"  ✅ 成功: {len(self.results['success'])}")
-        print(f"  ❌ 失败: {len(self.results['failed'])}")
-        print(f"  ⏭️  跳过(去重): {len(self.results['skipped'])}")
-        print(f"  ❓ 未找到: {len(self.results['notfound'])}")
+        print(f"  [OK] 成功: {len(self.results['success'])}")
+        print(f"  [FAIL] 失败: {len(self.results['failed'])}")
+        print(f"  [SKIP] 跳过(去重): {len(self.results['skipped'])}")
+        print(f"  [NF] 未找到: {len(self.results['notfound'])}")
         print(f"{'='*60}")
 
         if self.results['failed']:
             print(f"\n  失败列表:")
             for item in self.results['failed']:
-                print(f"    ✗ {item.get('title', '?')} - {item.get('artist', '?')}")
+                print(f"    [X] {item.get('title', '?')} - {item.get('artist', '?')}")
 
         if self.results['notfound']:
             print(f"\n  未找到的歌曲:")
@@ -861,7 +997,20 @@ def main():
     parser.add_argument('--unlimited-format', action='store_true',
                         help='不限格式，接受任何文件扩展名（默认只接受 mp3/flac/ape/wav 等）')
 
+    # 排行榜参数
+    parser.add_argument('--top-charts', type=str, default='',
+                        help='下载指定排行榜（如 qq_hot, netease_new, 热歌榜），使用 --list-top-charts 查看可用榜单')
+    parser.add_argument('--list-top-charts', action='store_true',
+                        help='列出所有可用的排行榜')
+    parser.add_argument('--chart-limit', type=int, default=0,
+                        help='排行榜模式下限制获取的歌曲数量（0=全部）')
+
     args = parser.parse_args()
+
+    # 先处理纯展示模式（不涉及下载，不需要 musicdl）
+    if args.list_top_charts:
+        list_top_charts()
+        sys.exit(0)
 
     # 收集歌曲
     songs = []
@@ -880,7 +1029,6 @@ def main():
                                      unlimited_format=args.unlimited_format)
         songs = downloader.load_songs_from_text(args.text.replace('\\n', '\n'))
     elif args.playlist_url:
-        # 先用空参数初始化，再解析歌单
         downloader = SmartDownloader(source=args.source, quality=args.quality,
                                      max_workers=args.workers, retry_count=args.retry,
                                      filename_template=args.filename_template,
@@ -889,6 +1037,15 @@ def main():
         songs = downloader.parse_playlist(args.playlist_url)
         if not songs:
             print("错误: 无法从歌单 URL 解析到任何歌曲")
+            sys.exit(1)
+    elif args.top_charts:
+        downloader = SmartDownloader(source=args.source, quality=args.quality,
+                                     max_workers=args.workers, retry_count=args.retry,
+                                     filename_template=args.filename_template,
+                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover,
+                                     unlimited_format=args.unlimited_format)
+        songs = downloader.get_top_chart(args.top_charts, limit=args.chart_limit)
+        if not songs:
             sys.exit(1)
     else:
         parser.print_help()
