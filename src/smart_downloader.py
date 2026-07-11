@@ -176,26 +176,58 @@ class SmartDownloader:
         print(f"  └─ 所有音源均未找到匹配")
         return None
 
+    def _clean_artist(self, name: str) -> str:
+        """清理歌手名：去除首尾标点符号和空白"""
+        cleaned = name.strip()
+        # 移除首尾的非中英文数字字符（保留中文、字母、数字、空格）
+        while cleaned and not (cleaned[0].isalnum() or '\u4e00' <= cleaned[0] <= '\u9fff'):
+            cleaned = cleaned[1:]
+        while cleaned and not (cleaned[-1].isalnum() or '\u4e00' <= cleaned[-1] <= '\u9fff'):
+            cleaned = cleaned[:-1]
+        return cleaned.strip()
+
     def _find_best_match(self, results: List, title: str, artist: str) -> Optional[Dict]:
+        """寻找最佳匹配，支持更精确的歌手名分段匹配"""
         title_lower = title.lower().strip()
         artist_lower = artist.lower().strip() if artist else ''
         for result in results:
             if hasattr(result, 'song_name'):
                 result_title = result.song_name or ''
-                result_artist = str(result.singers or '')
+                result_artist_raw = str(result.singers or '')
             elif isinstance(result, dict):
                 result_title = result.get('song_name', '') or result.get('title', '')
-                result_artist = str(result.get('singers', '') or result.get('artist', ''))
+                result_artist_raw = str(result.get('singers', '') or result.get('artist', ''))
             else:
                 continue
+            # 歌名必须包含用户输入的歌名（子串匹配）
             if title_lower not in result_title.lower():
                 continue
-            if artist_lower and artist_lower not in result_artist.lower():
-                continue
+            # 歌手筛选逻辑：
+            #   - 如果用户没有输入歌手 → 不筛选（只匹配歌名）
+            #   - 如果用户输入了歌手 → 按分段精确匹配
+            if artist_lower:
+                result_artist_lower = result_artist_raw.lower()
+                # 将结果歌手名按 , / 、 & 等分成独立歌手
+                result_segments = set()
+                for sep in [',', '/', '&', '、', '＆', '，', ' featuring ', ' feat. ']:
+                    for seg in result_artist_lower.split(sep):
+                        seg = seg.strip()
+                        if seg:
+                            result_segments.add(seg)
+                # 对每个分段清理首尾标点后检查是否包含输入歌手
+                matched = False
+                for seg in result_segments:
+                    clean_seg = self._clean_artist(seg)
+                    if artist_lower == clean_seg:
+                        matched = True
+                        break
+                if not matched:
+                    continue
+            # 匹配成功
             if hasattr(result, 'song_name'):
                 return {
                     'song_name': result.song_name,
-                    'singers': str(result.singers or ''),
+                    'singers': artist if artist else str(result.singers or ''),
                     'album': result.album or '',
                     'duration': result.duration or 0,
                     'quality': result.ext or '',
@@ -220,28 +252,31 @@ class SmartDownloader:
     # ========== 下载 ==========
 
     def download_song(self, song_info: Dict, output_dir: str) -> Optional[str]:
+        """下载单首歌曲，设置 work_dir 使 musicdl 将文件保存到 output_dir"""
         raw = song_info.get('raw', song_info)
         source = song_info.get('source', '')
         if not raw:
             return None
         try:
+            # 设置 work_dir，让 musicdl 将文件下载到 output_dir
+            if hasattr(raw, 'work_dir'):
+                raw.work_dir = output_dir
             result = self.client.music_clients[source].download(
                 song_infos=[raw], num_threadings=1
             )
-            if result:
-                if isinstance(result, list) and len(result) > 0:
-                    dl = result[0]
-                    if hasattr(dl, 'song_name'):
-                        sname = dl.song_name.replace('/', '_').replace('\\', '_')
-                        aname = str(getattr(dl, 'singers', '')).replace('/', '_').replace('\\', '_')
-                        ext = getattr(dl, 'ext', 'mp3')
-                        fpath = Path(output_dir) / f"{aname} - {sname}.{ext}"
-                        if fpath.exists():
-                            return str(fpath)
+            if result and isinstance(result, list) and len(result) > 0:
+                dl = result[0]
+                # 优先使用 SongInfo.save_path 属性获取实际文件路径
+                if hasattr(dl, 'save_path'):
+                    save_path = dl.save_path
+                    if save_path and os.path.exists(save_path):
+                        return str(save_path)
+                # 回退：在 output_dir 中查找刚下载的音频文件
+                if Path(output_dir).exists():
                     for f in Path(output_dir).iterdir():
                         if f.is_file() and f.suffix in ['.mp3', '.flac', '.ape', '.wav', '.aac', '.m4a', '.ogg']:
                             return str(f)
-                return str(result) if isinstance(result, str) else None
+            return None
         except Exception as e:
             print(f"    └─ 下载出错: {e}")
         return None
