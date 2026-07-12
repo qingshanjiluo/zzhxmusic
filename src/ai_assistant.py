@@ -815,6 +815,7 @@ class AIAgent:
         source = self.options.get('source', 'QQMusicClient')
         quality = self.options.get('quality', 'flac')
         workers = self.options.get('workers', 10)
+        max_songs = self.options.get('max_songs', 0)
         no_download = self.options.get('no_download', False)
 
         parts = [f"## 任务目标\n{self.task_goal}\n"]
@@ -822,6 +823,11 @@ class AIAgent:
         parts.append(f"- 首选音源: {source}")
         parts.append(f"- 音质: {quality}")
         parts.append(f"- 并发下载数: {workers}")
+
+        if max_songs > 0:
+            parts.append(f"- ⚠️ 最大歌曲数: {max_songs}（请严格控制发现的歌曲数量不超过此值）")
+        elif max_songs == 0:
+            parts.append(f"- 📊 最大歌曲数: 不限制（由你根据任务自主决定合适数量）")
 
         if no_download:
             parts.append(f"- ⚠️ 仅发现模式：不要调用 download_songs，发现并保存歌曲即可")
@@ -1130,6 +1136,8 @@ def main():
                         help='首选音源')
     parser.add_argument('--quality', '-q', type=str, default='flac',
                         help='音质偏好')
+    parser.add_argument('--max-songs', type=int, default=0,
+                        help='最大歌曲数（0=不限制，由 AI 自主决定数量）')
     parser.add_argument('--workers', '-w', type=int, default=10,
                         help='并发下载数')
     parser.add_argument('--output', '-o', type=str, default='./downloads',
@@ -1202,6 +1210,7 @@ def main():
         'source': args.source,
         'quality': args.quality,
         'workers': args.workers,
+        'max_songs': args.max_songs,
         'output_dir': args.output,
         'no_download': args.no_download,
     }
