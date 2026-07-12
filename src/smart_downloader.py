@@ -1116,10 +1116,13 @@ def main():
 
     # 收集歌曲
     songs = []
+    downloader = None
     if args.file:
-        songs = _make_downloader().load_songs_from_file(args.file)
+        downloader = _make_downloader()
+        songs = downloader.load_songs_from_file(args.file)
     elif args.text:
-        songs = _make_downloader().load_songs_from_text(args.text.replace('\\n', '\n'))
+        downloader = _make_downloader()
+        songs = downloader.load_songs_from_text(args.text.replace('\\n', '\n'))
     elif args.playlist_url:
         downloader = _make_downloader()
         songs = downloader.parse_playlist(args.playlist_url)
