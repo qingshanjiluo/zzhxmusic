@@ -556,11 +556,14 @@ class SmartDownloader:
                 )
                 if not sr:
                     return None
+                # 调试：记录搜索结果数
+                result_count = len(sr) if hasattr(sr, '__len__') else '?'
                 best = self._find_best_match(sr, title, artist)
                 if best:
                     best['source'] = source
                     return best
-                return None
+                # 搜索结果不为空但未匹配 → 返回一个标记对象，日志用
+                return {'_search_had_results': True, '_source': source, '_result_count': result_count, '_raw_count': len(sr) if hasattr(sr, '__len__') else 0}
             except Exception:
                 return None
 
@@ -583,9 +586,14 @@ class SmartDownloader:
             for source in batch:
                 res = batch_results.get(source)
                 if res is None:
-                    print(f"  |  ├─ {source}: 搜索出错或无结果")
+                    print(f"  |  ├─ {source}: 搜索出错（API 异常或无返回）")
                     continue
-                src = res['source']
+                # 标记对象：搜索结果不为空但 _find_best_match 未匹配成功
+                if res.get('_search_had_results'):
+                    count = res.get('_result_count', '?')
+                    print(f"  |  ├─ {source}: 返回 {count} 条结果但未通过匹配过滤（歌名/歌手不一致，将尝试下一个关键词变体）")
+                    continue
+                src = res.get('source', source)
                 print(f"  |  ├─ [OK] {src}: 找到匹配 -> {res.get('song_name', '')} - {res.get('singers', '')}")
                 return res
 
@@ -596,45 +604,91 @@ class SmartDownloader:
     def _find_best_match(self, results: List, title: str, artist: str) -> Optional[Dict]:
         """
         在搜索结果中找最佳匹配
-        匹配规则: 歌名包含搜索关键词，歌手（如果提供）包含歌手名
+        匹配规则（逐级宽松）:
+          1. 歌名 + 歌手都匹配 → 强匹配
+          2. 只有歌名匹配 → 中匹配
+          3. 没有任何严格匹配 → 返回第一个非空结果（兜底）
         """
         title_lower = title.lower().strip()
         artist_lower = artist.lower().strip() if artist else ''
+
+        best_exact = None      # 歌名+歌手都匹配
+        best_title_only = None # 仅歌名匹配
+        first_valid = None     # 兜底：第一个非空结果
 
         for result in results:
             # musicdl 的结果可能是 SongInfo 对象或 dict
             if hasattr(result, 'song_name'):
                 result_title = result.song_name or ''
-                result_artist = str(result.singers or '')
+                raw_artist = result.singers
+                # singers 可能是字符串 / 列表 / 其他
+                if isinstance(raw_artist, list):
+                    result_artist = ' '.join(str(a) for a in raw_artist)
+                else:
+                    result_artist = str(raw_artist or '')
             elif isinstance(result, dict):
                 result_title = result.get('song_name', '') or result.get('title', '')
-                result_artist = str(result.get('singers', '') or result.get('artist', ''))
+                raw_artist = result.get('singers', '') or result.get('artist', '')
+                if isinstance(raw_artist, list):
+                    result_artist = ' '.join(str(a) for a in raw_artist)
+                else:
+                    result_artist = str(raw_artist or '')
             else:
                 continue
 
-            # 歌名匹配（必须包含搜索的歌名关键词）
-            if title_lower not in result_title.lower():
-                continue
+            # 兜底：记录第一个非空结果
+            if first_valid is None and result_title:
+                first_valid = result
 
-            # 如果提供了歌手，检查歌手匹配
-            if artist_lower and artist_lower not in result_artist.lower():
-                continue
+            # 歌名匹配
+            title_match = title_lower in result_title.lower()
+            # 歌手匹配
+            artist_match = (not artist_lower) or (artist_lower in result_artist.lower())
 
-            # 匹配成功！返回结果
-            if hasattr(result, 'song_name'):
-                return {
-                    'song_name': result.song_name,
-                    'singers': str(result.singers or ''),
-                    'album': result.album or '',
-                    'duration': result.duration or 0,
-                    'quality': result.ext or '',
-                    'filesize': result.file_size or '',
-                    'source': '',
-                    'raw': result,
-                }
-            return result
+            if title_match and artist_match:
+                best_exact = result
+                # 找到了完全匹配，直接返回
+                return self._wrap_result(result)
+
+            if title_match and not best_title_only:
+                best_title_only = result
+
+        # 1. 优先返回歌名匹配的结果
+        if best_title_only is not None:
+            return self._wrap_result(best_title_only)
+
+        # 2. 若搜索关键词包含歌手，再检查歌手匹配
+        if first_valid is not None and artist_lower:
+            result_artist = ''
+            if hasattr(first_valid, 'song_name'):
+                ra = first_valid.singers
+                result_artist = str(' '.join(ra) if isinstance(ra, list) else (ra or ''))
+            elif isinstance(first_valid, dict):
+                ra = first_valid.get('singers', '') or first_valid.get('artist', '')
+                result_artist = str(' '.join(ra) if isinstance(ra, list) else (ra or ''))
+            if artist_lower in result_artist.lower():
+                return self._wrap_result(first_valid)
+
+        # 3. 兜底：返回第一个非空结果（关键词本身已包含歌名，结果理应相关）
+        if first_valid is not None:
+            return self._wrap_result(first_valid)
 
         return None
+
+    def _wrap_result(self, result) -> Dict:
+        """将 musicdl 结果包装为统一 Dict"""
+        if hasattr(result, 'song_name'):
+            return {
+                'song_name': result.song_name,
+                'singers': str(result.singers or ''),
+                'album': result.album or '',
+                'duration': result.duration or 0,
+                'quality': result.ext or '',
+                'filesize': result.file_size or '',
+                'source': '',
+                'raw': result,
+            }
+        return result
 
     # ========== 去重 ==========
 
