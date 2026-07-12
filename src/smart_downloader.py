@@ -165,7 +165,10 @@ class SmartDownloader:
                  max_workers: int = 10, retry_count: int = 2,
                  filename_template: str = '',
                  no_lyrics: bool = False, no_cover: bool = False,
-                 unlimited_format: bool = False):
+                 unlimited_format: bool = False,
+                 search_sources: Optional[List[str]] = None,
+                 search_batch_size: int = 2,
+                 search_size_per_source: int = 10):
         """
         初始化下载器
         Args:
@@ -177,6 +180,9 @@ class SmartDownloader:
             no_lyrics: 不下载歌词
             no_cover: 不下载封面
             unlimited_format: 不限格式，接受任何文件扩展名
+            search_sources: 自定义搜索音源列表（None=使用全部）
+            search_batch_size: 每批并发搜索的音源数（默认2，整批未匹配再试下一批）
+            search_size_per_source: 每个音源的最大搜索结果数（默认10）
         """
         self.primary_source = source
         self.quality = quality
@@ -186,6 +192,9 @@ class SmartDownloader:
         self.no_lyrics = no_lyrics
         self.no_cover = no_cover
         self.unlimited_format = unlimited_format
+        self.custom_search_sources = search_sources
+        self.search_batch_size = search_batch_size
+        self.search_size_per_source = search_size_per_source
         self.client = None
         self.SOURCE_CIRCUIT_BREAKER_THRESHOLD = 3  # 源级熔断：连续失败 N 次后跳过该源
         self.source_failures: Dict[str, int] = {}  # 每个源的连续失败次数
@@ -203,12 +212,17 @@ class SmartDownloader:
         self._init_client()
 
     def _init_client(self):
-        """初始化 musicdl 客户端"""
+        """初始化 musicdl 客户端，配置 search_size_per_source"""
         if not MUSICDL_AVAILABLE or MusicClient is None:
             print("警告: musicdl 未安装，仅排行榜功能可用")
             return
         try:
-            self.client = MusicClient()
+            all_sources = self._get_search_sources()
+            init_cfg = {src: {'search_size_per_source': self.search_size_per_source} for src in all_sources}
+            self.client = MusicClient(
+                music_sources=all_sources,
+                init_music_clients_cfg=init_cfg
+            )
         except Exception as e:
             print(f"警告: musicdl 初始化失败: {e}")
             print("部分音源可能不可用，将自动跳过")
@@ -218,6 +232,12 @@ class SmartDownloader:
         return self.client is not None and hasattr(self.client, 'music_clients') and self.client.music_clients is not None
 
     def _get_search_sources(self) -> List[str]:
+        """获取搜索音源列表（有序）
+        - 如果设置了 custom_search_sources，直接返回
+        - 否则 primary_source 排第一，其余按 SOURCE_PRIORITY 排列
+        """
+        if self.custom_search_sources:
+            return self.custom_search_sources
         sources = [self.primary_source]
         for src in self.SOURCE_PRIORITY:
             if src != self.primary_source:
@@ -506,7 +526,14 @@ class SmartDownloader:
         return None
 
     def _search_single_keyword(self, keyword: str, title: str, artist: str) -> Optional[Dict]:
-        """使用单个关键词在多个音源中**并行**搜索，最快返回的匹配结果优先"""
+        """
+        使用单个关键词在多个音源中**批次并发**搜索。
+        - 将音源按 search_batch_size 分组
+        - 每批内所有音源同时并发搜索
+        - 该批内有音源找到匹配 → 立即返回
+        - 整批都未匹配 → 继续下一批
+        - 所有批次均未匹配 → 返回 None
+        """
         if not self._client_ready():
             print(f"  |  client 未就绪，无法搜索 '{keyword}'")
             return None
@@ -516,9 +543,9 @@ class SmartDownloader:
             print(f"  |  没有可用音源，无法搜索 '{keyword}'")
             return None
 
-        print(f"  |  并行搜索 {len(search_sources)} 个音源...")
-
-        results_queue: List[Optional[Dict]] = []
+        batch_size = self.search_batch_size
+        total_batches = (len(search_sources) + batch_size - 1) // batch_size
+        print(f"  |  批次并发搜索 {len(search_sources)} 个音源 (批次大小: {batch_size})...")
 
         def _search_on_source(source: str) -> Optional[Dict]:
             """单个音源搜索（用于线程池）"""
@@ -537,18 +564,32 @@ class SmartDownloader:
             except Exception:
                 return None
 
-        with ThreadPoolExecutor(max_workers=len(search_sources)) as pool:
-            fut_map = {pool.submit(_search_on_source, s): s for s in search_sources}
-            for fut in as_completed(fut_map):
-                res = fut.result()
-                if res is not None:
-                    # 找到匹配，取消其他未完成的任务
-                    for o in fut_map:
-                        if not o.done():
-                            o.cancel()
-                    src = res['source']
-                    print(f"  |  +- [OK] {src}: 找到匹配 -> {res.get('song_name', '')} - {res.get('singers', '')}")
-                    return res
+        for batch_idx in range(0, len(search_sources), batch_size):
+            batch = search_sources[batch_idx:batch_idx + batch_size]
+            batch_num = batch_idx // batch_size + 1
+            print(f"  |  ┌─ 批次 {batch_num}/{total_batches}: {', '.join(batch)}")
+
+            batch_results: Dict[str, Optional[Dict]] = {}
+            with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                fut_map = {pool.submit(_search_on_source, s): s for s in batch}
+                for fut in as_completed(fut_map):
+                    src = fut_map[fut]
+                    try:
+                        batch_results[src] = fut.result()
+                    except Exception:
+                        batch_results[src] = None
+
+            # 检查当前批次每个音源的结果
+            for source in batch:
+                res = batch_results.get(source)
+                if res is None:
+                    print(f"  |  ├─ {source}: 搜索出错或无结果")
+                    continue
+                src = res['source']
+                print(f"  |  ├─ [OK] {src}: 找到匹配 -> {res.get('song_name', '')} - {res.get('singers', '')}")
+                return res
+
+            print(f"  |  └─ 批次 {batch_num} 结束 (本批无匹配)")
 
         return None
 
@@ -1026,6 +1067,14 @@ def main():
     parser.add_argument('--unlimited-format', action='store_true',
                         help='不限格式，接受任何文件扩展名（默认只接受 mp3/flac/ape/wav 等）')
 
+    # 搜索策略参数
+    parser.add_argument('--search-sources', type=str, default='',
+                        help='搜索音源范围 (逗号分隔，如: QQMusicClient,NeteaseMusicClient,KuwoMusicClient；留空则使用全部音源)')
+    parser.add_argument('--search-batch-size', type=int, default=2,
+                        help='每批并发搜索的音源数 (默认: 2，每批未匹配再试下一批)')
+    parser.add_argument('--search-size', type=int, default=10,
+                        help='每个音源的最大搜索结果数 (默认: 10，越大越容易匹配但越慢)')
+
     # 排行榜参数
     parser.add_argument('--top-charts', type=str, default='',
                         help='下载指定排行榜（如 qq_hot, netease_new, 热歌榜），使用 --list-top-charts 查看可用榜单')
@@ -1046,38 +1095,39 @@ def main():
         list_top_charts(source=args.source_charts.strip())
         sys.exit(0)
 
+    # 解析搜索音源范围
+    search_sources = None
+    if args.search_sources:
+        search_sources = [s.strip() for s in args.search_sources.split(',') if s.strip()]
+        print(f"自定义搜索音源范围: {', '.join(search_sources)}")
+
+    def _make_downloader():
+        """统一的 SmartDownloader 工厂方法"""
+        return SmartDownloader(
+            source=args.source, quality=args.quality,
+            max_workers=args.workers, retry_count=args.retry,
+            filename_template=args.filename_template,
+            no_lyrics=args.no_lyrics, no_cover=args.no_cover,
+            unlimited_format=args.unlimited_format,
+            search_sources=search_sources,
+            search_batch_size=args.search_batch_size,
+            search_size_per_source=args.search_size,
+        )
+
     # 收集歌曲
     songs = []
     if args.file:
-        downloader = SmartDownloader(source=args.source, quality=args.quality,
-                                     max_workers=args.workers, retry_count=args.retry,
-                                     filename_template=args.filename_template,
-                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover,
-                                     unlimited_format=args.unlimited_format)
-        songs = downloader.load_songs_from_file(args.file)
+        songs = _make_downloader().load_songs_from_file(args.file)
     elif args.text:
-        downloader = SmartDownloader(source=args.source, quality=args.quality,
-                                     max_workers=args.workers, retry_count=args.retry,
-                                     filename_template=args.filename_template,
-                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover,
-                                     unlimited_format=args.unlimited_format)
-        songs = downloader.load_songs_from_text(args.text.replace('\\n', '\n'))
+        songs = _make_downloader().load_songs_from_text(args.text.replace('\\n', '\n'))
     elif args.playlist_url:
-        downloader = SmartDownloader(source=args.source, quality=args.quality,
-                                     max_workers=args.workers, retry_count=args.retry,
-                                     filename_template=args.filename_template,
-                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover,
-                                     unlimited_format=args.unlimited_format)
+        downloader = _make_downloader()
         songs = downloader.parse_playlist(args.playlist_url)
         if not songs:
             print("错误: 无法从歌单 URL 解析到任何歌曲")
             sys.exit(1)
     elif args.top_charts:
-        downloader = SmartDownloader(source=args.source, quality=args.quality,
-                                     max_workers=args.workers, retry_count=args.retry,
-                                     filename_template=args.filename_template,
-                                     no_lyrics=args.no_lyrics, no_cover=args.no_cover,
-                                     unlimited_format=args.unlimited_format)
+        downloader = _make_downloader()
         songs = downloader.get_top_chart(args.top_charts, limit=args.chart_limit)
         if not songs:
             sys.exit(1)

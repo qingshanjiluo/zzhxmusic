@@ -18,6 +18,14 @@ on:
           - KuwoMusicClient
           - KugouMusicClient
           - MiguMusicClient
+          - QianqianMusicClient
+          - SoundCloudClient
+          - YouTubeMusicClient
+      search_sources:
+        description: '搜索音源范围（逗号分隔，留空=全部音源，如: QQMusicClient,NeteaseMusicClient）'
+        required: false
+        type: string
+        default: ''
       quality:
         description: '音质'
         required: true
@@ -57,6 +65,7 @@ jobs:
       run: |
         echo "歌单 URL: ${{ github.event.inputs.playlist_url }}"
         echo "首选音源: ${{ github.event.inputs.source }}"
+        echo "搜索音源范围: '${{ github.event.inputs.search_sources }}'"
         echo "音质: ${{ github.event.inputs.quality }}"
         echo "并发数: ${{ github.event.inputs.max_workers }}"
 

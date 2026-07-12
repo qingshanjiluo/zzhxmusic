@@ -112,7 +112,9 @@ batch-music-downloader/
 
 ### 下载引擎 ([`src/smart_downloader.py`](src/smart_downloader.py))
 
-- 串行逐源搜索，搜到即停
+- **批次并发搜索**：每批同时搜索 N 个音源（默认2），整批未匹配再试下一批
+- **可配置搜索音源范围**：`--search-sources` 自定义搜索音源列表
+- **可配置每源搜索结果数**：`--search-size` 控制匹配全面性
 - 音质自动回退（flac→ape→wav→mp3→auto）
 - 跨音源重试 + 源级熔断
 - 歌名/歌手变体搜索

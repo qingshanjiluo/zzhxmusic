@@ -35,6 +35,21 @@ on:
           - QianqianMusicClient
           - SoundCloudClient
           - YouTubeMusicClient
+      search_sources:
+        description: '搜索音源范围（逗号分隔，留空=全部音源，如: QQMusicClient,NeteaseMusicClient）'
+        required: false
+        type: string
+        default: ''
+      search_batch_size:
+        description: '每批并发搜索音源数（每批搜索完未匹配再试下一批，默认2）'
+        required: false
+        type: number
+        default: 2
+      search_size:
+        description: '每源搜索结果数（越大越容易匹配但越慢，默认10）'
+        required: false
+        type: number
+        default: 10
       quality:
         description: '音质'
         required: true
@@ -75,6 +90,9 @@ jobs:
       run: |
         echo "输入模式: ${{ github.event.inputs.input_mode }}"
         echo "首选音源: ${{ github.event.inputs.source }}"
+        echo "搜索音源范围: '${{ github.event.inputs.search_sources }}'"
+        echo "搜索批次大小: ${{ github.event.inputs.search_batch_size }}"
+        echo "每源搜索结果数: ${{ github.event.inputs.search_size }}"
         echo "音质: ${{ github.event.inputs.quality }}"
         echo "并发数: ${{ github.event.inputs.max_workers }}"
         echo "歌手筛选: ${{ github.event.inputs.artist_filter }}"
@@ -112,7 +130,15 @@ jobs:
         CMD="$CMD --source ${{ github.event.inputs.source }}"
         CMD="$CMD --quality ${{ github.event.inputs.quality }}"
         CMD="$CMD --workers ${{ github.event.inputs.max_workers }}"
-        
+        CMD="$CMD --search-batch-size ${{ github.event.inputs.search_batch_size }}"
+        CMD="$CMD --search-size ${{ github.event.inputs.search_size }}"
+
+        # 如果指定了搜索音源范围，则传递
+        SEARCH_SOURCES="${{ github.event.inputs.search_sources }}"
+        if [ -n "$SEARCH_SOURCES" ]; then
+          CMD="$CMD --search-sources '${SEARCH_SOURCES}'"
+        fi
+
         if [ -n "${{ github.event.inputs.artist_filter }}" ]; then
           CMD="$CMD --artist-filter '${{ github.event.inputs.artist_filter }}'"
         fi
