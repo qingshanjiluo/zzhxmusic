@@ -78,7 +78,7 @@ jobs:
         import os
         from pathlib import Path
 
-        sys.path.insert(0, 'batch-music-downloader')
+        sys.path.insert(0, '.')
         from src.batch_downloader import BatchDownloader
 
         playlist_url = "${{ github.event.inputs.playlist_url }}"
