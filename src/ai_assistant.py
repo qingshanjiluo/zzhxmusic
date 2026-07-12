@@ -187,11 +187,18 @@ class LLMFunctionCallClient:
             properties = {}
             required = info.get('required_params', [])
 
+            # params 的值已经是完整的 JSON Schema Property 格式
+            # 例如: { 'type': 'string', 'description': '搜索关键词' }
+            # 直接使用，无需额外包装
             for pname, pdesc in info.get('params', {}).items():
-                properties[pname] = {
-                    'type': 'string',
-                    'description': pdesc,
-                }
+                if isinstance(pdesc, dict):
+                    properties[pname] = pdesc
+                else:
+                    # 兼容纯字符串格式（旧版）
+                    properties[pname] = {
+                        'type': 'string',
+                        'description': pdesc,
+                    }
 
             # 如果 params 是嵌套 dict（如 download_songs 的 songs 参数是数组）
             detailed_params = info.get('detailed_params', {})
