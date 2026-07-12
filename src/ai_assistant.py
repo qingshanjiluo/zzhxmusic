@@ -1135,8 +1135,8 @@ def main():
                         help='OpenAI API 密钥')
     parser.add_argument('--browseract-key', type=str, default='',
                         help='BrowserAct API key（可选）')
-    parser.add_argument('--model', type=str, default='deepseek-chat',
-                        help='AI 模型名（默认 deepseek-chat，可选 gpt-4o-mini 等）')
+    parser.add_argument('--model', type=str, default='deepseek-v4-flash',
+                        help='AI 模型名（默认 deepseek-v4-flash，可选 gpt-4o-mini 等）')
 
     # 下载选项
     parser.add_argument('--source', '-s', type=str, default='QQMusicClient',
