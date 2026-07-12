@@ -595,7 +595,7 @@ class SearchTools:
             r'.*?<a class="result__snippet"[^>]*>(.*?)</a>',
             re.DOTALL
         )
-        for match in result_pattern.finditer(html_content)[:max_results]:
+        for match in list(result_pattern.finditer(html_content))[:max_results]:
             url = self._decode_html_entities(match.group(1).strip())
             title = self._strip_tags(match.group(2)).strip()
             snippet = self._strip_tags(match.group(3)).strip()
