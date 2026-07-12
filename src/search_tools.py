@@ -18,6 +18,7 @@ import os
 import json
 import re
 import subprocess
+import shutil
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -64,6 +65,17 @@ class BrowserActSearch:
     
     # browser-act CLI 路径
     BROWSER_ACT_CMD = 'browser-act'
+    
+    # 缓存检测结果：browser-act 是否已安装
+    _available = None
+    
+    @classmethod
+    def is_available(cls) -> bool:
+        """检测 browser-act 命令是否已安装"""
+        if cls._available is None:
+            import shutil
+            cls._available = shutil.which(cls.BROWSER_ACT_CMD) is not None
+        return cls._available
     
     # 搜索 URL 模板
     SEARCH_URLS = {
@@ -300,6 +312,9 @@ class BrowserActSearch:
     
     def _run_cmd(self, args: List[str], check: bool = True) -> Optional[str]:
         """执行 browser-act 命令"""
+        if not self.is_available():
+            return None
+        
         cmd = [self.BROWSER_ACT_CMD] + args
         
         env = os.environ.copy()
@@ -320,7 +335,6 @@ class BrowserActSearch:
         except subprocess.TimeoutExpired:
             return None
         except FileNotFoundError:
-            print("  [browser-act] 未找到 browser-act 命令，请确保已安装")
             return None
     
     def fetch_page(self, url: str, max_chars: int = 3000) -> str:
