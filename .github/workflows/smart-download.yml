@@ -1,0 +1,177 @@
+name: 智能歌曲下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_mode:
+        description: '输入来源'
+        required: true
+        type: choice
+        default: 'file'
+        options:
+          - file
+          - manual
+      songs_text:
+        description: '歌曲列表（manual 模式时填写，用;分隔歌曲，用,分隔歌手，如: 七里香,周杰伦;稻香,周杰伦;童话,光良）'
+        required: false
+        type: string
+        default: ''
+      artist_filter:
+        description: '歌手筛选（可选，留空则不筛选）'
+        required: false
+        type: string
+        default: ''
+      source:
+        description: '首选音源'
+        required: true
+        type: choice
+        default: 'QQMusicClient'
+        options:
+          - QQMusicClient
+          - NeteaseMusicClient
+          - KuwoMusicClient
+          - KugouMusicClient
+          - MiguMusicClient
+          - QianqianMusicClient
+          - SoundCloudClient
+          - YouTubeMusicClient
+      search_sources:
+        description: '搜索音源范围（逗号分隔，留空=全部音源，如: QQMusicClient,NeteaseMusicClient）'
+        required: false
+        type: string
+        default: ''
+      search_batch_size:
+        description: '每批并发搜索音源数（每批搜索完未匹配再试下一批，默认2）'
+        required: false
+        type: number
+        default: 2
+      search_size:
+        description: '每源搜索结果数（越大越容易匹配但越慢，默认10）'
+        required: false
+        type: number
+        default: 10
+      quality:
+        description: '音质'
+        required: true
+        type: choice
+        default: 'flac'
+        options:
+          - flac
+          - mp3
+          - ape
+          - wav
+          - aac
+          - auto
+      max_workers:
+        description: '并发下载数'
+        required: false
+        type: number
+        default: 5
+
+jobs:
+  smart-download:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 显示输入参数
+      run: |
+        echo "输入模式: ${{ github.event.inputs.input_mode }}"
+        echo "首选音源: ${{ github.event.inputs.source }}"
+        echo "搜索音源范围: '${{ github.event.inputs.search_sources }}'"
+        echo "搜索批次大小: ${{ github.event.inputs.search_batch_size }}"
+        echo "每源搜索结果数: ${{ github.event.inputs.search_size }}"
+        echo "音质: ${{ github.event.inputs.quality }}"
+        echo "并发数: ${{ github.event.inputs.max_workers }}"
+        echo "歌手筛选: ${{ github.event.inputs.artist_filter }}"
+
+    - name: 读取 song-queue.txt（file 模式）
+      if: github.event.inputs.input_mode == 'file'
+      run: |
+        if [ ! -f song-queue.txt ]; then
+          echo "错误: song-queue.txt 文件不存在！"
+          echo "请先在仓库中创建 song-queue.txt 文件，或选择 manual 输入模式。"
+          exit 1
+        fi
+        echo "song-queue.txt 内容:"
+        cat song-queue.txt
+        echo ""
+        echo "FILE_PATH=song-queue.txt" >> $GITHUB_ENV
+
+    - name: 显示歌曲列表（manual 模式）
+      if: github.event.inputs.input_mode == 'manual'
+      run: |
+        echo "--- 手动输入的歌曲列表 ---"
+        echo "${{ github.event.inputs.songs_text }}"
+        echo "---"
+        echo "TEXT_INPUT=${{ github.event.inputs.songs_text }}" >> $GITHUB_ENV
+
+    - name: 运行智能下载引擎
+      id: download
+      run: |
+        CMD="python src/smart_downloader.py"
+        if [ "${{ github.event.inputs.input_mode }}" = "file" ]; then
+          CMD="$CMD --file song-queue.txt"
+        else
+          CMD="$CMD --text '${TEXT_INPUT}'"
+        fi
+        CMD="$CMD --source ${{ github.event.inputs.source }}"
+        CMD="$CMD --quality ${{ github.event.inputs.quality }}"
+        CMD="$CMD --workers ${{ github.event.inputs.max_workers }}"
+        CMD="$CMD --search-batch-size ${{ github.event.inputs.search_batch_size }}"
+        CMD="$CMD --search-size ${{ github.event.inputs.search_size }}"
+
+        # 如果指定了搜索音源范围，则传递
+        SEARCH_SOURCES="${{ github.event.inputs.search_sources }}"
+        if [ -n "$SEARCH_SOURCES" ]; then
+          CMD="$CMD --search-sources '${SEARCH_SOURCES}'"
+        fi
+
+        if [ -n "${{ github.event.inputs.artist_filter }}" ]; then
+          CMD="$CMD --artist-filter '${{ github.event.inputs.artist_filter }}'"
+        fi
+        
+        echo "执行: $CMD"
+        eval $CMD
+
+    - name: 列出下载文件
+      run: |
+        echo "--- 下载的文件 ---"
+        if [ -d "downloads" ]; then
+          find downloads -type f | head -30
+          echo ""
+          echo "文件总数:"
+          find downloads -type f | wc -l
+        else
+          echo "无下载文件"
+        fi
+
+    - name: 打包下载文件
+      run: |
+        if [ -d "downloads" ]; then
+          zip -r songs-download.zip downloads/
+          echo "ZIP 打包完成"
+          ls -lh songs-download.zip
+        else
+          echo "NO_FILES=true" >> $GITHUB_ENV
+          echo "没有需要打包的文件"
+        fi
+
+    - name: 上传 Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: songs-download
+        path: songs-download.zip
+        if-no-files-found: warn
