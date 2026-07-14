@@ -70,8 +70,8 @@ on:
           - 'QQ,Netease'
           - 'QQ,Netease,Kuwo,Kugou,Migu'
           - 'Netease,QQ,Bilibili'
-          - '仅Netease'
-          - '仅QQ'
+          - 'Netease'
+          - 'QQ'
           - '自定义'
       search_sources_custom:
         description: '自定义搜索音源（search_sources_preset=自定义时生效，如: QQMusicClient,NeteaseMusicClient）'
@@ -190,7 +190,7 @@ jobs:
         if [ "$PRESET" = "自定义" ] && [ -n "$CUSTOM" ]; then
           CMD="$CMD --search-sources '${CUSTOM}'"
         elif [ "$PRESET" != "全部音源" ] && [ -n "$PRESET" ]; then
-          # 预设值已经是逗号分隔的短名，补全 MusicClient 后缀
+          # 预设值是逗号分隔的短名，补全 MusicClient 后缀
           FULL_SOURCES=""
           IFS=',' read -ra NAMES <<< "$PRESET"
           for name in "${NAMES[@]}"; do
