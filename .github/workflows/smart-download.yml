@@ -52,7 +52,7 @@ on:
         type: number
         default: 10
       quality:
-        description: '音质'
+        description: '音质（any_quality=yes 时忽略）'
         required: true
         type: choice
         default: 'flac'
@@ -63,6 +63,30 @@ on:
           - wav
           - aac
           - auto
+      any_quality:
+        description: '不限音质（接受任何格式，绕过音质链）'
+        required: true
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
+      with_lyrics:
+        description: '下载歌词（默认不下载）'
+        required: true
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
+      with_cover:
+        description: '下载封面（默认不下载）'
+        required: true
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
       max_workers:
         description: '并发下载数'
         required: false
@@ -95,6 +119,9 @@ jobs:
         echo "搜索批次大小: ${{ github.event.inputs.search_batch_size }}"
         echo "每源搜索结果数: ${{ github.event.inputs.search_size }}"
         echo "音质: ${{ github.event.inputs.quality }}"
+        echo "不限音质: ${{ github.event.inputs.any_quality }}"
+        echo "下载歌词: ${{ github.event.inputs.with_lyrics }}"
+        echo "下载封面: ${{ github.event.inputs.with_cover }}"
         echo "并发数: ${{ github.event.inputs.max_workers }}"
         echo "歌手筛选: ${{ github.event.inputs.artist_filter }}"
 
@@ -130,6 +157,15 @@ jobs:
         fi
         CMD="$CMD --source ${{ github.event.inputs.source }}"
         CMD="$CMD --quality ${{ github.event.inputs.quality }}"
+        if [ "${{ github.event.inputs.any_quality }}" = "yes" ]; then
+          CMD="$CMD --any-quality"
+        fi
+        if [ "${{ github.event.inputs.with_lyrics }}" = "yes" ]; then
+          CMD="$CMD --with-lyrics"
+        fi
+        if [ "${{ github.event.inputs.with_cover }}" = "yes" ]; then
+          CMD="$CMD --with-cover"
+        fi
         CMD="$CMD --workers ${{ github.event.inputs.max_workers }}"
         CMD="$CMD --search-batch-size ${{ github.event.inputs.search_batch_size }}"
         CMD="$CMD --search-size ${{ github.event.inputs.search_size }}"
