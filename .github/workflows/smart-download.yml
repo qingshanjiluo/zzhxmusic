@@ -35,6 +35,7 @@ on:
           - QianqianMusicClient
           - SoundCloudClient
           - YouTubeMusicClient
+          - BilibiliMusicClient
       search_sources:
         description: '搜索音源范围（逗号分隔，留空=全部音源，如: QQMusicClient,NeteaseMusicClient）'
         required: false
