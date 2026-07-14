@@ -1,0 +1,7 @@
+musicdl>=2.0.0
+requests>=2.28.0
+rich>=13.0.0
+
+# AI 智能音乐助手依赖（可选）
+# openai>=1.0.0          # OpenAI API（AI 增强模式）
+# httpx>=0.25.0          # 部分 API 客户端需要
