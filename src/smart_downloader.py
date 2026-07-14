@@ -1165,7 +1165,8 @@ def main():
     # 解析搜索音源范围
     search_sources = None
     if args.search_sources:
-        search_sources = [s.strip() for s in args.search_sources.split(',') if s.strip()]
+        # 同时支持英文逗号 , 和中文全角逗号 ，
+        search_sources = [s.strip() for s in args.search_sources.replace('，', ',').split(',') if s.strip()]
         print(f"自定义搜索音源范围: {', '.join(search_sources)}")
 
     def _make_downloader():
