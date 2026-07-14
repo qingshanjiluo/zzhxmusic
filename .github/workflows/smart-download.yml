@@ -36,11 +36,6 @@ on:
           - SoundCloudClient
           - YouTubeMusicClient
           - BilibiliMusicClient
-      search_sources:
-        description: '搜索音源范围（逗号分隔，留空=全部音源，如: QQMusicClient,NeteaseMusicClient）'
-        required: false
-        type: string
-        default: ''
       search_batch_size:
         description: '每批并发搜索音源数（每批搜索完未匹配再试下一批，默认2）'
         required: false
@@ -52,25 +47,37 @@ on:
         type: number
         default: 10
       quality:
-        description: '音质（any_quality=yes 时忽略）'
+        description: '音质（选"不限"则跳过音质链，接受任何格式）'
         required: true
         type: choice
         default: 'flac'
         options:
+          - '不限'
           - flac
           - mp3
           - ape
           - wav
           - aac
           - auto
-      any_quality:
-        description: '不限音质（接受任何格式，绕过音质链）'
+      search_sources_preset:
+        description: '搜索音源范围预设'
         required: true
         type: choice
-        default: 'no'
+        default: 'QQ,Netease,Kuwo'
         options:
-          - 'no'
-          - 'yes'
+          - '全部音源'
+          - 'QQ,Netease,Kuwo'
+          - 'QQ,Netease'
+          - 'QQ,Netease,Kuwo,Kugou,Migu'
+          - 'Netease,QQ,Bilibili'
+          - '仅Netease'
+          - '仅QQ'
+          - '自定义'
+      search_sources_custom:
+        description: '自定义搜索音源（search_sources_preset=自定义时生效，如: QQMusicClient,NeteaseMusicClient）'
+        required: false
+        type: string
+        default: ''
       with_lyrics:
         description: '下载歌词（默认不下载）'
         required: true
@@ -115,11 +122,11 @@ jobs:
       run: |
         echo "输入模式: ${{ github.event.inputs.input_mode }}"
         echo "首选音源: ${{ github.event.inputs.source }}"
-        echo "搜索音源范围: '${{ github.event.inputs.search_sources }}'"
+        echo "搜索音源预设: ${{ github.event.inputs.search_sources_preset }}"
+        echo "自定义搜索音源: '${{ github.event.inputs.search_sources_custom }}'"
         echo "搜索批次大小: ${{ github.event.inputs.search_batch_size }}"
         echo "每源搜索结果数: ${{ github.event.inputs.search_size }}"
         echo "音质: ${{ github.event.inputs.quality }}"
-        echo "不限音质: ${{ github.event.inputs.any_quality }}"
         echo "下载歌词: ${{ github.event.inputs.with_lyrics }}"
         echo "下载封面: ${{ github.event.inputs.with_cover }}"
         echo "并发数: ${{ github.event.inputs.max_workers }}"
@@ -156,24 +163,44 @@ jobs:
           CMD="$CMD --text '${TEXT_INPUT}'"
         fi
         CMD="$CMD --source ${{ github.event.inputs.source }}"
-        CMD="$CMD --quality ${{ github.event.inputs.quality }}"
-        if [ "${{ github.event.inputs.any_quality }}" = "yes" ]; then
-          CMD="$CMD --any-quality"
+
+        # --- 音质: 选"不限"则跳过音质链 ---
+        QUALITY="${{ github.event.inputs.quality }}"
+        if [ "$QUALITY" = "不限" ]; then
+          CMD="$CMD --any-quality --quality auto"
+        else
+          CMD="$CMD --quality $QUALITY"
         fi
+
+        # --- 歌词/封面 ---
         if [ "${{ github.event.inputs.with_lyrics }}" = "yes" ]; then
           CMD="$CMD --with-lyrics"
         fi
         if [ "${{ github.event.inputs.with_cover }}" = "yes" ]; then
           CMD="$CMD --with-cover"
         fi
+
         CMD="$CMD --workers ${{ github.event.inputs.max_workers }}"
         CMD="$CMD --search-batch-size ${{ github.event.inputs.search_batch_size }}"
         CMD="$CMD --search-size ${{ github.event.inputs.search_size }}"
 
-        # 如果指定了搜索音源范围，则传递
-        SEARCH_SOURCES="${{ github.event.inputs.search_sources }}"
-        if [ -n "$SEARCH_SOURCES" ]; then
-          CMD="$CMD --search-sources '${SEARCH_SOURCES}'"
+        # --- 搜索音源范围: preset + 自定义 ---
+        PRESET="${{ github.event.inputs.search_sources_preset }}"
+        CUSTOM="${{ github.event.inputs.search_sources_custom }}"
+        if [ "$PRESET" = "自定义" ] && [ -n "$CUSTOM" ]; then
+          CMD="$CMD --search-sources '${CUSTOM}'"
+        elif [ "$PRESET" != "全部音源" ] && [ -n "$PRESET" ]; then
+          # 预设值已经是逗号分隔的短名，补全 MusicClient 后缀
+          FULL_SOURCES=""
+          IFS=',' read -ra NAMES <<< "$PRESET"
+          for name in "${NAMES[@]}"; do
+            name_trimmed=$(echo "$name" | xargs)
+            if [ -n "$FULL_SOURCES" ]; then
+              FULL_SOURCES="${FULL_SOURCES},"
+            fi
+            FULL_SOURCES="${FULL_SOURCES}${name_trimmed}MusicClient"
+          done
+          CMD="$CMD --search-sources '${FULL_SOURCES}'"
         fi
 
         if [ -n "${{ github.event.inputs.artist_filter }}" ]; then
