@@ -170,34 +170,37 @@ class SmartDownloader:
     def __init__(self, source: str = 'QQMusicClient', quality: str = 'flac',
                  max_workers: int = 10, retry_count: int = 2,
                  filename_template: str = '',
-                 no_lyrics: bool = False, no_cover: bool = False,
+                 no_lyrics: bool = True, no_cover: bool = True,
                  unlimited_format: bool = False,
                  search_sources: Optional[List[str]] = None,
                  search_batch_size: int = 2,
-                 search_size_per_source: int = 10):
+                 search_size_per_source: int = 10,
+                 any_quality: bool = False):
         """
         初始化下载器
         Args:
             source: 首选音源（搜不到时自动切换下一个）
-            quality: 音质偏好
+            quality: 音质偏好（any_quality=True 时忽略）
             max_workers: 最大并发下载数（根据歌单规模调整，建议 10-20）
             retry_count: 下载失败重试次数
             filename_template: 文件命名模板（空=使用默认）
-            no_lyrics: 不下载歌词
-            no_cover: 不下载封面
+            no_lyrics: 不下载歌词（默认 True）
+            no_cover: 不下载封面（默认 True）
             unlimited_format: 不限格式，接受任何文件扩展名
             search_sources: 自定义搜索音源列表（None=使用全部）
             search_batch_size: 每批并发搜索的音源数（默认2，整批未匹配再试下一批）
             search_size_per_source: 每个音源的最大搜索结果数（默认10）
+            any_quality: True=不限定音质，接受任何格式（等价 quality='auto' + unlimited_format=True）
         """
         self.primary_source = source
         self.quality = quality
+        self.any_quality = any_quality
         self.max_workers = max_workers
         self.retry_count = max(1, retry_count)
         self.filename_template = filename_template
         self.no_lyrics = no_lyrics
         self.no_cover = no_cover
-        self.unlimited_format = unlimited_format
+        self.unlimited_format = unlimited_format or any_quality
         self.custom_search_sources = search_sources
         self.search_batch_size = search_batch_size
         self.search_size_per_source = search_size_per_source
@@ -211,7 +214,10 @@ class SmartDownloader:
             'skipped': [],   # 去重跳过的歌曲
             'notfound': [],  # 搜索不到的歌曲
         }
-        self.quality_fallback_list = self.QUALITY_FALLBACK.get(quality, ['mp3', 'auto'])
+        if any_quality:
+            self.quality_fallback_list = ['auto']
+        else:
+            self.quality_fallback_list = self.QUALITY_FALLBACK.get(quality, ['mp3', 'auto'])
         self._file_index = 0  # 文件序号计数器
         # 不限格式时，允许所有常见音频后缀 + 任何后缀
         self._valid_exts = None  # None = 不限格式
@@ -1119,8 +1125,10 @@ def main():
     # V2 新增参数
     parser.add_argument('--filename-template', type=str, default='',
                         help='文件命名模板，支持 {title}/{artist}/{index}/{source}/{quality}/{album}')
-    parser.add_argument('--no-lyrics', action='store_true', help='不下载歌词')
-    parser.add_argument('--no-cover', action='store_true', help='不下载封面')
+    parser.add_argument('--with-lyrics', action='store_true', help='下载歌词（默认不下载）')
+    parser.add_argument('--with-cover', action='store_true', help='下载封面（默认不下载）')
+    parser.add_argument('--any-quality', action='store_true',
+                        help='不限音质，接受任何格式（跳过音质链，直接下载自动选择的质量）')
     parser.add_argument('--first', type=int, default=0,
                         help='只下载前 N 首（优先级高于 --range）')
     parser.add_argument('--last', type=int, default=0,
@@ -1175,8 +1183,9 @@ def main():
             source=args.source, quality=args.quality,
             max_workers=args.workers, retry_count=args.retry,
             filename_template=args.filename_template,
-            no_lyrics=args.no_lyrics, no_cover=args.no_cover,
+            no_lyrics=not args.with_lyrics, no_cover=not args.with_cover,
             unlimited_format=args.unlimited_format,
+            any_quality=args.any_quality,
             search_sources=search_sources,
             search_batch_size=args.search_batch_size,
             search_size_per_source=args.search_size,

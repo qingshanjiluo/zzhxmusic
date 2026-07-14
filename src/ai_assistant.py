@@ -1203,6 +1203,8 @@ def main():
             source=source,
             quality=quality,
             max_workers=workers,
+            no_lyrics=True,
+            no_cover=True,
         )
 
     # 初始化工具执行器
