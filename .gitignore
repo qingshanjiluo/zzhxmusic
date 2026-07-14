@@ -51,6 +51,9 @@ venv/bak/
 /site
 .mypy_cache/
 
+# musicdl 输出缓存
+musicdl_outputs/
+
 # 系统
 .DS_Store
 Thumbs.db

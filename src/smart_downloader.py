@@ -98,6 +98,12 @@ SOURCE_NAMES = {
     'QQ': 'QQ音乐', 'Netease': '网易云音乐',
 }
 
+# 排行榜 source 字段 → musicdl 客户端名称映射
+CHART_SOURCE_TO_CLIENT = {
+    'QQ': 'QQMusicClient',
+    'Netease': 'NeteaseMusicClient',
+}
+
 
 def list_top_charts(source: str = ''):
     """列出所有可用的排行榜（模块级函数，不依赖 musicdl）
@@ -391,11 +397,11 @@ class SmartDownloader:
             return songs
 
         except requests.exceptions.Timeout:
-            print(f"  ❌ 请求超时: {chart_cfg['name']}")
+            print(f"  [FAIL] 请求超时: {chart_cfg['name']}")
         except requests.exceptions.ConnectionError:
-            print(f"  ❌ 连接失败: {chart_cfg['name']}")
+            print(f"  [FAIL] 连接失败: {chart_cfg['name']}")
         except Exception as e:
-            print(f"  ❌ 获取失败: {e}")
+            print(f"  [FAIL] 获取失败: {e}")
 
         return songs
 
@@ -801,10 +807,16 @@ class SmartDownloader:
             # ===== 源级熔断检查 =====
             src_fails = self.source_failures.get(source, 0)
             if src_fails >= self.SOURCE_CIRCUIT_BREAKER_THRESHOLD:
-                print(f"    [DEBUG]   ⛔ 源 {source} 已熔断（连续失败 {src_fails} 次），跳过")
+                print(f"    [DEBUG]   [熔断] 源 {source} 已熔断（连续失败 {src_fails} 次），跳过")
                 continue
 
+            # **修复: 每首歌每个 source 只计一次熔断，所有 quality 尝试完后再决定**
+            source_succeeded = False
+            last_error = None
+
             for quality in quality_chain:
+                if source_succeeded:
+                    break
                 actual_si = copy.deepcopy(raw)
                 if hasattr(actual_si, 'work_dir'):
                     actual_si.work_dir = output_dir
@@ -816,12 +828,9 @@ class SmartDownloader:
                         song_infos=[actual_si], num_threadings=1
                     )
 
-                    # ===== 空列表识别（修复 1）=====
+                    # ===== 空列表识别 =====
                     if not result or not isinstance(result, list) or len(result) == 0:
-                        old_fails = self.source_failures.get(source, 0)
-                        self.source_failures[source] = old_fails + 1
-                        failed_count = self.source_failures[source]
-                        print(f"    [DEBUG]   download() 返回空列表 []（musicdl 内部失败），源熔断计数={failed_count}/{self.SOURCE_CIRCUIT_BREAKER_THRESHOLD}")
+                        print(f"    [DEBUG]   download() 返回空列表 []（musicdl 内部失败），尝试下一个音质")
                         continue
 
                     dl = result[0]
@@ -848,6 +857,7 @@ class SmartDownloader:
                     if save_path:
                         # 成功：重置该源的熔断计数
                         self.source_failures[source] = 0
+                        source_succeeded = True
                         # 应用文件命名模板
                         if self.filename_template:
                             old_path = Path(save_path)
@@ -866,18 +876,21 @@ class SmartDownloader:
                         self.save_cover(song_info, save_path)
                         return save_path
                     else:
-                        # 结果非空但无文件落地 → 算软失败
-                        old_fails = self.source_failures.get(source, 0)
-                        self.source_failures[source] = old_fails + 1
-                        failed_count = self.source_failures[source]
-                        print(f"    [DEBUG]   结果非空但无文件落地（musicdl 内部下载失败），源熔断计数={failed_count}/{self.SOURCE_CIRCUIT_BREAKER_THRESHOLD}")
+                        # 结果非空但无文件落地 → 尝试下一个音质
+                        print(f"    [DEBUG]   结果非空但无文件落地（musicdl 内部下载失败），尝试下一个音质")
 
                 except Exception as e:
-                    old_fails = self.source_failures.get(source, 0)
-                    self.source_failures[source] = old_fails + 1
-                    failed_count = self.source_failures[source]
-                    print(f"    [DEBUG]   download异常: {type(e).__name__}: {e} → 源熔断计数={failed_count}/{self.SOURCE_CIRCUIT_BREAKER_THRESHOLD}")
+                    last_error = e
+                    print(f"    [DEBUG]   download异常: {type(e).__name__}: {e}，尝试下一个音质")
                     continue
+
+            # **所有 quality 均失败 → 计一次熔断（不是每个 quality 计一次）**
+            if not source_succeeded:
+                old_fails = self.source_failures.get(source, 0)
+                self.source_failures[source] = old_fails + 1
+                failed_count = self.source_failures[source]
+                err_detail = f"last_error={last_error}" if last_error else "all_quality_failed"
+                print(f"    [DEBUG]   源 {source} 全部音质均失败（{err_detail}）→ 熔断计数={failed_count}/{self.SOURCE_CIRCUIT_BREAKER_THRESHOLD}")
 
         print(f"    [DEBUG]   所有source+quality组合均失败，返回None")
         return None
@@ -992,20 +1005,20 @@ class SmartDownloader:
                             })
                             # 标记去重
                             self.mark_downloaded(title, artist)
-                            print(f"  ✓ {title} - {artist}")
+                            print(f"  [OK] {title} - {artist}")
                         else:
                             self.results['failed'].append({
                                 'title': title,
                                 'artist': artist,
                                 'source': song.get('source', ''),
                             })
-                            print(f"  ✗ {title} - {artist} 下载失败（已重试所有音质和音源）")
-                    except Exception as e:
+                            print(f"  [FAIL] {title} - {artist} 下载失败（已重试所有音质和音源）")
+                    except BaseException as e:
                         self.results['failed'].append({
                             'title': title,
                             'artist': artist,
                         })
-                        print(f"  ✗ {title} - {artist} 异常: {e}")
+                        print(f"  [FAIL] {title} - {artist} 异常: {type(e).__name__}: {e}")
 
         # 阶段 3: 打包
         print(f"\n==> 阶段 3/3: 打包下载文件...")
@@ -1036,7 +1049,7 @@ class SmartDownloader:
             for f in audio_files:
                 zf.write(f, f.name)
 
-        print(f"  ✓ 已打包: {zip_name} ({len(audio_files)} 个文件)")
+        print(f"  [OK] 已打包: {zip_name} ({len(audio_files)} 个文件)")
         return str(zip_path)
 
     # ========== 报告 ==========
@@ -1184,6 +1197,15 @@ def main():
             print("错误: 无法从歌单 URL 解析到任何歌曲")
             sys.exit(1)
     elif args.top_charts:
+        # **修复: 根据排行榜自动选择最优音源**
+        resolved_key = TOP_CHARTS_ALIASES.get(args.top_charts, args.top_charts)
+        chart_cfg = TOP_CHARTS.get(resolved_key)
+        if chart_cfg:
+            chart_source = chart_cfg.get('source', '')
+            chart_client = CHART_SOURCE_TO_CLIENT.get(chart_source, '')
+            if chart_client:
+                print(f"  排行榜 '{chart_cfg['name']}' 来自 {chart_source} → 自动使用 {chart_client}")
+                args.source = chart_client
         downloader = _make_downloader()
         songs = downloader.get_top_chart(args.top_charts, limit=args.chart_limit)
         if not songs:
@@ -1253,8 +1275,8 @@ def main():
     except KeyboardInterrupt:
         print("\n\n用户中断下载")
         sys.exit(1)
-    except Exception as e:
-        print(f"\n下载过程出错: {e}")
+    except BaseException as e:
+        print(f"\n下载过程出错: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

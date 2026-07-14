@@ -450,7 +450,7 @@ class AgentToolExecutor:
 
     def _handle_search_web(self, query: str, max_results: int = 5) -> str:
         """搜索网络"""
-        print(f"\n  🔍 [工具] search_web(query='{query}', max={max_results})")
+        print(f"\n  [搜索] [工具] search_web(query='{query}', max={max_results})")
         results = self.search.search_web(query, max_results=max_results)
         if not results:
             return "搜索未返回任何结果"
@@ -466,7 +466,7 @@ class AgentToolExecutor:
 
     def _handle_fetch_page(self, url: str) -> str:
         """获取网页内容"""
-        print(f"\n  📄 [工具] fetch_page(url='{url[:60]}...')")
+        print(f"\n  [网页] [工具] fetch_page(url='{url[:60]}...')")
         content = self.search.fetch_page(url, max_chars=3000)
         if not content or content.startswith('[browser-act'):
             return f"无法获取页面内容: {content}"
@@ -475,7 +475,7 @@ class AgentToolExecutor:
 
     def _handle_list_charts(self) -> str:
         """列出排行榜"""
-        print(f"\n  📊 [工具] list_charts()")
+        print(f"\n  [数据] [工具] list_charts()")
         from smart_downloader import TOP_CHARTS
         lines = ["可用的音乐排行榜:"]
         for key, info in TOP_CHARTS.items():
@@ -484,7 +484,7 @@ class AgentToolExecutor:
 
     def _handle_get_chart(self, chart_key: str, limit: int = 20) -> str:
         """获取排行榜"""
-        print(f"\n  📊 [工具] get_chart(chart_key='{chart_key}', limit={limit})")
+        print(f"\n  [数据] [工具] get_chart(chart_key='{chart_key}', limit={limit})")
         songs = self.discovery.discover_from_chart(chart_key, limit=limit)
         if not songs:
             return f"排行榜 '{chart_key}' 未获取到歌曲"
@@ -497,7 +497,7 @@ class AgentToolExecutor:
 
     def _handle_discover_artist(self, artist: str, max_songs: int = 20) -> str:
         """按歌手发现"""
-        print(f"\n  🎤 [工具] discover_by_artist(artist='{artist}', max={max_songs})")
+        print(f"\n  [歌手] [工具] discover_by_artist(artist='{artist}', max={max_songs})")
         songs = self.discovery.discover_by_artist(artist, max_songs=max_songs)
         if not songs:
             return f"未找到歌手 '{artist}' 的歌曲"
@@ -509,7 +509,7 @@ class AgentToolExecutor:
 
     def _handle_discover_style(self, style: str, max_songs: int = 20) -> str:
         """按风格发现"""
-        print(f"\n  🎵 [工具] discover_by_style(style='{style}', max={max_songs})")
+        print(f"\n  [风格] [工具] discover_by_style(style='{style}', max={max_songs})")
         songs = self.discovery.discover_by_style(style, max_songs=max_songs)
         if not songs:
             return f"未找到风格 '{style}' 的歌曲"
@@ -525,7 +525,7 @@ class AgentToolExecutor:
         AI 筛选歌曲 — 使用 LLM 智能筛选
         这是一个特殊的工具，它调用 LLM 来理解用户需求并进行语义筛选
         """
-        print(f"\n  🧠 [工具] ai_filter_songs(max_songs={max_songs or '全部'})")
+        print(f"\n  [AI] [工具] ai_filter_songs(max_songs={max_songs or '全部'})")
         try:
             songs = json.loads(songs_json)
         except json.JSONDecodeError as e:
@@ -597,7 +597,7 @@ class AgentToolExecutor:
             if max_songs > 0 and len(filtered) > max_songs:
                 filtered = filtered[:max_songs]
 
-            lines = [f"🧠 AI 筛选完成: {len(songs)} 首 → {len(filtered)} 首"]
+            lines = [f"[AI] AI 筛选完成: {len(songs)} 首 → {len(filtered)} 首"]
             for i, s in enumerate(filtered, 1):
                 lines.append(f"  {i:3d}. {s['title']} - {s.get('artist', '?')}")
             lines.append(f"\n筛选后的 JSON:\n{json.dumps(filtered, ensure_ascii=False)}")
@@ -640,7 +640,7 @@ class AgentToolExecutor:
         if max_songs > 0 and len(filtered) > max_songs:
             filtered = filtered[:max_songs]
 
-        lines = [f"📋 规则筛选完成: {len(songs)} 首 → {len(filtered)} 首"]
+        lines = [f"[筛选] 规则筛选完成: {len(songs)} 首 → {len(filtered)} 首"]
         for i, s in enumerate(filtered, 1):
             lines.append(f"  {i:3d}. {s['title']} - {s.get('artist', '?')}")
         lines.append(f"\n筛选后的 JSON:\n{json.dumps(filtered, ensure_ascii=False)}")
@@ -648,7 +648,7 @@ class AgentToolExecutor:
 
     def _handle_save_songs(self, songs_json: str, filepath: str = 'song-queue.txt') -> str:
         """保存歌曲列表到文件"""
-        print(f"\n  💾 [工具] save_songs(count=?, file='{filepath}')")
+        print(f"\n  [保存] [工具] save_songs(count=?, file='{filepath}')")
         try:
             songs = json.loads(songs_json)
         except json.JSONDecodeError as e:
@@ -681,7 +681,7 @@ class AgentToolExecutor:
 
         Path(filepath).write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
-        result_lines = [f"✅ 已保存 {len(unique)} 首歌曲到 {filepath}"]
+        result_lines = [f"[OK] 已保存 {len(unique)} 首歌曲到 {filepath}"]
         for i, s in enumerate(unique, 1):
             result_lines.append(f"  {i:3d}. {s['title']} - {s.get('artist', '?')}")
         return '\n'.join(result_lines)
@@ -689,7 +689,7 @@ class AgentToolExecutor:
     def _handle_download(self, songs_json: str, source: str = 'QQMusicClient',
                          quality: str = 'flac', workers: int = 5) -> str:
         """执行下载"""
-        print(f"\n  ⬇️ [工具] download_songs(count=?, source={source}, quality={quality})")
+        print(f"\n  [下载] [工具] download_songs(count=?, source={source}, quality={quality})")
         try:
             songs = json.loads(songs_json)
         except json.JSONDecodeError as e:
@@ -703,8 +703,8 @@ class AgentToolExecutor:
 
         try:
             results = downloader.download_queue(songs, output_dir=output_dir)
-        except Exception as e:
-            return f"下载执行失败: {e}"
+        except BaseException as e:
+            return f"下载执行失败 ({type(e).__name__}): {e}"
 
         success = results.get('success', [])
         failed = results.get('failed', [])
@@ -712,13 +712,13 @@ class AgentToolExecutor:
         skipped = results.get('skipped', [])
 
         lines = [f"下载完成 — 目录: {output_dir}"]
-        lines.append(f"  ✅ 成功: {len(success)} 首")
+        lines.append(f"  [OK] 成功: {len(success)} 首")
         if failed:
-            lines.append(f"  ❌ 失败: {len(failed)} 首")
+            lines.append(f"  [FAIL] 失败: {len(failed)} 首")
         if notfound:
-            lines.append(f"  ❓ 未找到: {len(notfound)} 首")
+            lines.append(f"  [?] 未找到: {len(notfound)} 首")
         if skipped:
-            lines.append(f"  ⏭️ 跳过: {len(skipped)} 首")
+            lines.append(f"  [跳过] 跳过: {len(skipped)} 首")
 
         if success:
             lines.append("\n成功下载的歌曲:")
@@ -832,12 +832,12 @@ class AIAgent:
         parts.append(f"- 并发下载数: {workers}")
 
         if max_songs > 0:
-            parts.append(f"- ⚠️ 最大歌曲数: {max_songs}（请严格控制发现的歌曲数量不超过此值）")
+            parts.append(f"- [!] 最大歌曲数: {max_songs}（请严格控制发现的歌曲数量不超过此值）")
         elif max_songs == 0:
-            parts.append(f"- 📊 最大歌曲数: 不限制（由你根据任务自主决定合适数量）")
+            parts.append(f"- [信息] 最大歌曲数: 不限制（由你根据任务自主决定合适数量）")
 
         if no_download:
-            parts.append(f"- ⚠️ 仅发现模式：不要调用 download_songs，发现并保存歌曲即可")
+            parts.append(f"- [!] 仅发现模式：不要调用 download_songs，发现并保存歌曲即可")
 
         parts.append(f"\n请根据任务目标自主决定如何操作。每次只调用一个工具。")
 
@@ -859,7 +859,7 @@ class AIAgent:
             }
         """
         print(f"\n{'='*60}")
-        print(f"  🤖 AI 智能音乐助手 V3 — Agent 模式")
+        print(f"  [AI] AI 智能音乐助手 V3 — Agent 模式")
         print(f"  {'='*50}")
         print(f"  任务: {self.task_goal}")
         print(f"  模型: {self.llm.model}")
@@ -889,7 +889,7 @@ class AIAgent:
                 )
             except Exception as e:
                 error_msg = f"LLM 调用失败: {e}"
-                print(f"  ❌ {error_msg}")
+                print(f"  [FAIL] {error_msg}")
                 self.trace.append({'step': iteration, 'action': 'llm_error', 'result': error_msg})
                 # 降级：执行默认流程
                 return self._fallback_flow()
@@ -898,12 +898,12 @@ class AIAgent:
             tool_calls = response.get('tool_calls', [])
 
             if content:
-                print(f"  💬 {content[:300]}")
+                print(f"  [回复] {content[:300]}")
 
             if not tool_calls:
                 # AI 决定任务完成
                 final_content = content
-                print(f"\n  ✅ AI 认为任务已完成")
+                print(f"\n  [OK] AI 认为任务已完成")
                 break
 
             # 执行每个工具调用
@@ -919,12 +919,12 @@ class AIAgent:
                 except json.JSONDecodeError:
                     args = {'raw': raw_args}
 
-                print(f"\n  🛠️  [{tool_calls_made}] {name}({json.dumps(args, ensure_ascii=False)[:100]})")
+                print(f"\n  [调用] [{tool_calls_made}] {name}({json.dumps(args, ensure_ascii=False)[:100]})")
 
                 # 执行工具
                 result_text = self.executor.execute(name, args)
 
-                print(f"  📋 结果: {result_text[:200]}...")
+                print(f"  [结果] 结果: {result_text[:200]}...")
 
                 # 记录 trace
                 self.trace.append({
@@ -979,14 +979,14 @@ class AIAgent:
         """
         降级流程 — 当 LLM 不可用时，使用规则引擎执行默认流程
         """
-        print(f"\n  ⚠️  LLM 不可用，使用规则降级模式")
+        print(f"\n  [!] LLM 不可用，使用规则降级模式")
         return FallbackFlow(self.task_goal, self.executor, self.options).run()
 
     def _generate_report(self, final_content: str, tool_calls: int, iterations: int) -> str:
         """生成任务报告"""
         lines = [
             f"\n{'='*60}",
-            f"  🤖 AI 智能音乐助手 — 任务报告",
+            f"  [AI] AI 智能音乐助手 — 任务报告",
             f"{'='*60}",
             f"",
             f"  任务目标: {self.task_goal}",
@@ -1238,7 +1238,7 @@ def main():
 
     # 输出结果
     print(f"\n{'='*60}")
-    print(f"  状态: {'✅ 成功' if result['status'] == 'success' else '❌ 失败'}")
+    print(f"  状态: {'[OK] 成功' if result['status'] == 'success' else '[FAIL] 失败'}")
     print(f"  消息: {result['message'][:200]}")
     print(f"{'='*60}")
 
