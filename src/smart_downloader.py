@@ -39,7 +39,7 @@ import zipfile
 import argparse
 from pathlib import Path
 from typing import List, Dict, Optional, Set, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from datetime import datetime
 
 # musicdl 导入（可选，--list-top-charts 不需要它）
@@ -519,7 +519,8 @@ class SmartDownloader:
                 seen.add(kw.lower())
                 unique.append(kw)
 
-        return unique
+        # 限制最多 3 个关键词变体（避免排行榜大量歌曲时搜索过多轮次）
+        return unique[:3]
 
     def search_best_match(self, title: str, artist: str = '') -> Optional[Dict]:
         """
@@ -587,12 +588,21 @@ class SmartDownloader:
             batch_results: Dict[str, Optional[Dict]] = {}
             with ThreadPoolExecutor(max_workers=len(batch)) as pool:
                 fut_map = {pool.submit(_search_on_source, s): s for s in batch}
-                for fut in as_completed(fut_map):
+                # 每批搜索添加 30 秒超时（防 musicdl 卡死/慢速源）
+                SEARCH_TIMEOUT = 30
+                done, not_done = wait(fut_map.keys(), timeout=SEARCH_TIMEOUT, return_when=FIRST_COMPLETED)
+                for fut in done:
                     src = fut_map[fut]
                     try:
                         batch_results[src] = fut.result()
                     except Exception:
                         batch_results[src] = None
+                # 取消超时未完成的
+                for fut in not_done:
+                    src = fut_map[fut]
+                    print(f"  |  ├─ {src}: 搜索超时 (> {SEARCH_TIMEOUT}s)，取消")
+                    fut.cancel()
+                    batch_results[src] = None
 
             # 检查当前批次每个音源的结果
             for source in batch:
