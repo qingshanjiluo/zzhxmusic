@@ -43,7 +43,7 @@ python src/ai_assistant.py --list-tools
 │  SerpAPI可选      │  │  · 排行榜发现       │  │  · 音质回退      │
 │  Google/Bing可选  │  │  · 风格/相似发现    │  │  · 源级熔断      │
 └──────────────────┘  │  · 网络搜索发现      │  │  · ZIP打包       │
-                       └────────────────────┘  └──────────────────┘
+                        └────────────────────┘  └──────────────────┘
 ```
 
 ### 传统下载方式
@@ -116,9 +116,10 @@ batch-music-downloader/
 - **可配置搜索音源范围**：`--search-sources` 自定义搜索音源列表
 - **可配置每源搜索结果数**：`--search-size` 控制匹配全面性
 - 音质自动回退（flac→ape→wav→mp3→auto）
-- 跨音源重试 + 源级熔断
+- 跨音源重试 + 源级熔断 + 熔断衰减
 - 歌名/歌手变体搜索
 - 并发队列下载、自动打包
+- 支持网易云音乐登录凭证（`--netease-cookies` / `NETEASE_COOKIES` 环境变量）
 
 ---
 
@@ -150,22 +151,56 @@ batch-music-downloader/
 | `热歌榜下载` | 从排行榜下载，支持定时自动运行 |
 | `列出音源榜单` | 查看可用排行榜 |
 
-### 设置 Secrets（用于 AI 增强）
+### 设置 Secrets（解决 CI 403 限流 + AI 增强）
 
 1. GitHub 仓库 → **Settings** → **Secrets and variables** → **Actions**
 2. 点击 **New repository secret**
-3. 添加以下密钥（均为可选）：
+3. 添加以下密钥：
 
 | Secret 名称 | 说明 | 必填 |
 |-------------|------|------|
+| `NETEASE_COOKIES` | **网易云音乐登录凭证（JSON 格式）**，解决 CI 环境 403 限流问题 | 强烈推荐（下载网易云歌曲时） |
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥（推荐） | 否 |
 | `OPENAI_API_KEY` | OpenAI API 密钥 | 否 |
 | `BROWSERACT_API_KEY` | BrowserAct API key（免费注册，用于 stealth 浏览器搜索） | 否 |
 
-> **关于搜索**: 默认使用 `browser-act` chrome 模式搜索 Google（无需任何 API key）。
-> 如果注册 BrowserAct 并设置 `BROWSERACT_API_KEY`，将自动启用 stealth-extract 模式，
-> 可突破反爬虫机制搜索 Google/Bing 等引擎。
-> SerpAPI 已不再需要使用。
+#### 🔑 配置 NETEASE_COOKIES（解决 CI 环境 403）
+
+> **背景**: GitHub Actions 的 IP 被网易云音乐等平台列入黑名单，导致大量音乐下载时返回 403。
+> 配置有效的登录凭证后，musicdl 会使用认证身份请求，绕过 IP 限流。
+
+**获取方式**（使用浏览器开发者工具）:
+
+1. 在浏览器中登录 [music.163.com](https://music.163.com)
+2. 按 F12 打开开发者工具 → **Application** → **Cookies** → `music.163.com`
+3. 右键点击任意 cookie → 选择 **复制全部** 为 JSON 格式
+4. 将完整的 JSON 字符串作为 `NETEASE_COOKIES` Secret 值添加
+
+**最小必要字段**（只需关注 `MUSIC_U` 和 `__csrf`）：
+
+```
+{"MUSIC_U":"你的MUSIC_U值","__csrf":"你的csrf值","__remember_me":"true"}
+```
+
+`MUSIC_U` 是网易云音乐的核心认证 token，有效期通常为数天至数周。
+过期后重新抓取更新即可。
+
+**本地测试**：
+
+```bash
+# 通过环境变量传入
+export NETEASE_COOKIES='{"MUSIC_U":"xxx","__remember_me":"true"}'
+python src/smart_downloader.py --file song-queue.txt
+
+# 或通过 CLI 参数（优先级更高）
+python src/smart_downloader.py --netease-cookies '{"MUSIC_U":"xxx"}' --file song-queue.txt
+```
+
+#### 关于搜索
+
+默认使用 `browser-act` chrome 模式搜索 Google（无需任何 API key）。
+如果注册 BrowserAct 并设置 `BROWSERACT_API_KEY`，将自动启用 stealth-extract 模式，
+可突破反爬虫机制搜索 Google/Bing 等引擎。
 
 ---
 
@@ -214,6 +249,27 @@ python -m src.search_tools
 python src/ai_assistant.py --task "搜索最近流行的英文歌曲" --no-download
 ```
 
+### 使用登录凭证下载
+
+```bash
+# 通过 --netease-cookies 参数传入
+python src/smart_downloader.py \
+  --netease-cookies '{"MUSIC_U":"your_token_here"}' \
+  --file song-queue.txt \
+  --source NeteaseMusicClient
+
+# 排行榜下载 + 登录凭证（解决 403）
+python src/smart_downloader.py \
+  --netease-cookies '{"MUSIC_U":"your_token_here"}' \
+  --top-charts netease_hot \
+  --chart-limit 50 \
+  --quality flac
+
+# 使用环境变量（更安全）
+export NETEASE_COOKIES='{"MUSIC_U":"your_token_here"}'
+python src/smart_downloader.py --top-charts netease_soar --chart-limit 30
+```
+
 ---
 
 ## ⚙️ 高级配置
@@ -222,6 +278,7 @@ python src/ai_assistant.py --task "搜索最近流行的英文歌曲" --no-downl
 
 | 变量 | 说明 |
 |------|------|
+| `NETEASE_COOKIES` | 网易云音乐登录凭证 JSON 字符串（CLI 参数 `--netease-cookies` 优先级更高） |
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥 |
 | `OPENAI_API_KEY` | OpenAI API 密钥 |
 | `BROWSERACT_API_KEY` | BrowserAct API key（免费注册，用于 stealth 浏览器搜索） |

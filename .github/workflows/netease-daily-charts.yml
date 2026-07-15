@@ -66,6 +66,8 @@ jobs:
 
     - name: 下载网易云飙升榜
       id: download
+      env:
+        NETEASE_COOKIES: ${{ secrets.NETEASE_COOKIES }}
       run: |
         CHART="netease_soar"
         LIMIT="${{ github.event.inputs.soar_limit || '30' }}"
@@ -128,6 +130,8 @@ jobs:
 
     - name: 下载网易云热歌榜
       id: download
+      env:
+        NETEASE_COOKIES: ${{ secrets.NETEASE_COOKIES }}
       run: |
         CHART="netease_hot"
         LIMIT="${{ github.event.inputs.hot_limit || '30' }}"

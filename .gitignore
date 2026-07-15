@@ -76,3 +76,10 @@ docs/_build/
 # 测试下载缓存
 musicdl_outputs/
 test_downloads_tao/
+
+# 敏感凭证（请勿提交）
+netease_cookies.json
+extract_cookies.js
+
+# 调试日志
+0_smart-download.txt

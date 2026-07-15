@@ -78,6 +78,8 @@ jobs:
 
     - name: 获取热歌榜并下载
       id: download
+      env:
+        NETEASE_COOKIES: ${{ secrets.NETEASE_COOKIES }}
       run: |
         CHART="${{ github.event.inputs.chart || 'qq_hot' }}"
         LIMIT="${{ github.event.inputs.chart_limit || '20' }}"

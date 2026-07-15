@@ -35,6 +35,8 @@ import re
 import json
 import shutil
 import copy
+import time
+import random
 import zipfile
 import argparse
 from pathlib import Path
@@ -175,7 +177,8 @@ class SmartDownloader:
                  search_sources: Optional[List[str]] = None,
                  search_batch_size: int = 2,
                  search_size_per_source: int = 10,
-                 any_quality: bool = False):
+                 any_quality: bool = False,
+                 netease_cookies: Optional[Dict[str, str]] = None):
         """
         初始化下载器
         Args:
@@ -191,6 +194,7 @@ class SmartDownloader:
             search_batch_size: 每批并发搜索的音源数（默认2，整批未匹配再试下一批）
             search_size_per_source: 每个音源的最大搜索结果数（默认10）
             any_quality: True=不限定音质，接受任何格式（等价 quality='auto' + unlimited_format=True）
+            netease_cookies: 网易云音乐登录凭证（cookies 字典），用于 CI 环境绕过 403 限流
         """
         self.primary_source = source
         self.quality = quality
@@ -204,9 +208,12 @@ class SmartDownloader:
         self.custom_search_sources = search_sources
         self.search_batch_size = search_batch_size
         self.search_size_per_source = search_size_per_source
+        self.netease_cookies = netease_cookies or {}
         self.client = None
         self.SOURCE_CIRCUIT_BREAKER_THRESHOLD = 3  # 源级熔断：连续失败 N 次后跳过该源
+        self.SOURCE_CIRCUIT_BREAKER_TIMEOUT = 120  # 熔断衰减时间（秒）：超过此时间无新失败，计数减半
         self.source_failures: Dict[str, int] = {}  # 每个源的连续失败次数
+        self.source_failure_times: Dict[str, float] = {}  # 每个源最后失败的时间戳
         self.downloaded_set: Set[str] = set()  # 去重集合: "歌名|歌手"
         self.results = {
             'success': [],   # 成功下载的歌曲
@@ -224,13 +231,19 @@ class SmartDownloader:
         self._init_client()
 
     def _init_client(self):
-        """初始化 musicdl 客户端，配置 search_size_per_source"""
+        """初始化 musicdl 客户端，配置 search_size_per_source 和登录凭证"""
         if not MUSICDL_AVAILABLE or MusicClient is None:
             print("警告: musicdl 未安装，仅排行榜功能可用")
             return
         try:
             all_sources = self._get_search_sources()
             init_cfg = {src: {'search_size_per_source': self.search_size_per_source} for src in all_sources}
+            # 为 NeteaseMusicClient 注入登录凭证（如果有），在 CI 环境中绕过 403 限流
+            if self.netease_cookies and 'NeteaseMusicClient' in init_cfg:
+                init_cfg['NeteaseMusicClient']['default_search_cookies'] = self.netease_cookies
+                init_cfg['NeteaseMusicClient']['default_download_cookies'] = self.netease_cookies
+                init_cfg['NeteaseMusicClient']['default_parse_cookies'] = self.netease_cookies
+                print(f"[凭证] 已为 NeteaseMusicClient 注入登录凭证 ({len(self.netease_cookies)} 个 cookie)")
             self.client = MusicClient(
                 music_sources=all_sources,
                 init_music_clients_cfg=init_cfg
@@ -265,6 +278,36 @@ class SmartDownloader:
             if s in self.client.music_clients:
                 available.append(s)
         return available
+
+    def _decay_source_failures(self, source: str):
+        """熔断计数衰减：如果 source 的最后失败时间超过 SOURCE_CIRCUIT_BREAKER_TIMEOUT，将计数减半（至少减 1）
+        防止 IP 限流短暂恢复后，熔断计数永久阻塞该源。
+        """
+        now = time.time()
+        last_fail = self.source_failure_times.get(source)
+        if last_fail is not None and (now - last_fail) > self.SOURCE_CIRCUIT_BREAKER_TIMEOUT:
+            old = self.source_failures.get(source, 0)
+            if old > 0:
+                new_val = max(0, old // 2)
+                self.source_failures[source] = new_val
+                self.source_failure_times.pop(source, None)
+                if new_val > 0:
+                    print(f"    [DECAY]  源 {source} 熔断计数衰减: {old} → {new_val}（超过 {self.SOURCE_CIRCUIT_BREAKER_TIMEOUT}s 无新失败）")
+                else:
+                    print(f"    [DECAY]  源 {source} 熔断计数已清零（熔断自动恢复）")
+
+    def _record_source_failure(self, source: str, reason: str = ''):
+        """记录一次源级失败（含时间戳），供熔断衰减使用"""
+        old = self.source_failures.get(source, 0)
+        self.source_failures[source] = old + 1
+        self.source_failure_times[source] = time.time()
+        print(f"    [DEBUG]   {reason} → 源 {source} 熔断计数={self.source_failures[source]}/{self.SOURCE_CIRCUIT_BREAKER_THRESHOLD}")
+
+    def _is_source_circuit_broken(self, source: str) -> bool:
+        """检查源是否已熔断（先做衰减再判断）"""
+        self._decay_source_failures(source)
+        src_fails = self.source_failures.get(source, 0)
+        return src_fails >= self.SOURCE_CIRCUIT_BREAKER_THRESHOLD
 
     # ========== 输入解析 ==========
 
@@ -790,12 +833,17 @@ class SmartDownloader:
 
     def download_song_with_retry(self, song_info: Dict, output_dir: str) -> Optional[str]:
         """
-        带重试 + 音质回退 + 跨音源 + 源级熔断的下载方法
+        带重试 + 音质回退 + 跨音源 + 源级熔断 + 熔断衰减的下载方法
 
         修复 V1 的 3 大问题:
           1. musicdl 内部吞 403 异常 → 识别空列表 [] 为下载失败
           2. 质量回退未真正生效 → deepcopy 后注入 quality/bitrate
           3. Netease 403 阻塞多首歌 → 源级熔断自动跳过故障源
+
+        新增 V3 修复:
+          4. 熔断永不恢复 → SOURCE_CIRCUIT_BREAKER_TIMEOUT 后自动衰减计数
+          5. 并发下载同时触发限流 → 随机延迟 jitter 分散请求
+          6. 所有源都熔断后停止尝试 → 熔断重置 + 重试机制
         """
         raw = song_info.get('raw', song_info)
         primary_source = song_info.get('source', self.primary_source)
@@ -818,15 +866,36 @@ class SmartDownloader:
             print(f"    [DEBUG]   没有可用音源，无法下载")
             return None
 
+        # ===== 检查是否所有可用源都熔断了 =====
+        all_broken = True
+        for src in available_sources:
+            if not self._is_source_circuit_broken(src):
+                all_broken = False
+                break
+        if all_broken:
+            # 所有源都熔断时，找到最早熔断的源，强制重置
+            print(f"    [DEBUG]   所有可用源均已熔断！尝试强制重置一个源以继续...")
+            # 找到失败次数最少的源（最早可能恢复的）
+            best_source = min(available_sources, key=lambda s: self.source_failures.get(s, 0))
+            old_count = self.source_failures.get(best_source, 0)
+            self.source_failures[best_source] = 0
+            self.source_failure_times.pop(best_source, None)
+            print(f"    [DECAY]   强制重置 {best_source}（原熔断计数 {old_count}），继续尝试下载")
+            # 短暂等待，避免所有 worker 同时重置同一个源
+            time.sleep(random.uniform(0.2, 1.0))
+
         for source in available_sources:
 
-            # ===== 源级熔断检查 =====
-            src_fails = self.source_failures.get(source, 0)
-            if src_fails >= self.SOURCE_CIRCUIT_BREAKER_THRESHOLD:
-                print(f"    [DEBUG]   [熔断] 源 {source} 已熔断（连续失败 {src_fails} 次），跳过")
+            # ===== 源级熔断检查（带衰减） =====
+            if self._is_source_circuit_broken(source):
+                print(f"    [DEBUG]   [熔断] 源 {source} 已熔断（计数 {self.source_failures.get(source, 0)}），跳过")
                 continue
 
-            # **修复: 每首歌每个 source 只计一次熔断，所有 quality 尝试完后再决定**
+            # ===== 随机延迟：分散并发请求，避免同时触发 IP 限流 =====
+            jitter_delay = random.uniform(0.1, 0.8)
+            if jitter_delay > 0.3:
+                time.sleep(jitter_delay)
+
             source_succeeded = False
             last_error = None
 
@@ -846,7 +915,7 @@ class SmartDownloader:
 
                     # ===== 空列表识别 =====
                     if not result or not isinstance(result, list) or len(result) == 0:
-                        print(f"    [DEBUG]   download() 返回空列表 []（musicdl 内部失败），尝试下一个音质")
+                        self._record_source_failure(source, f"download() 返回空列表 []（musicdl 内部失败）")
                         continue
 
                     dl = result[0]
@@ -871,8 +940,9 @@ class SmartDownloader:
                                         break
 
                     if save_path:
-                        # 成功：重置该源的熔断计数
+                        # 成功：重置该源的熔断计数和时间戳
                         self.source_failures[source] = 0
+                        self.source_failure_times.pop(source, None)
                         source_succeeded = True
                         # 应用文件命名模板
                         if self.filename_template:
@@ -892,21 +962,18 @@ class SmartDownloader:
                         self.save_cover(song_info, save_path)
                         return save_path
                     else:
-                        # 结果非空但无文件落地 → 尝试下一个音质
-                        print(f"    [DEBUG]   结果非空但无文件落地（musicdl 内部下载失败），尝试下一个音质")
+                        # 结果非空但无文件落地 → 计一次熔断
+                        self._record_source_failure(source, "结果非空但无文件落地（musicdl 内部下载失败）")
 
                 except Exception as e:
                     last_error = e
-                    print(f"    [DEBUG]   download异常: {type(e).__name__}: {e}，尝试下一个音质")
+                    self._record_source_failure(source, f"download异常: {type(e).__name__}: {e}")
                     continue
 
-            # **所有 quality 均失败 → 计一次熔断（不是每个 quality 计一次）**
+            # **所有 quality 均失败 → 不影响，已在每个 quality 失败时计熔断**
             if not source_succeeded:
-                old_fails = self.source_failures.get(source, 0)
-                self.source_failures[source] = old_fails + 1
-                failed_count = self.source_failures[source]
                 err_detail = f"last_error={last_error}" if last_error else "all_quality_failed"
-                print(f"    [DEBUG]   源 {source} 全部音质均失败（{err_detail}）→ 熔断计数={failed_count}/{self.SOURCE_CIRCUIT_BREAKER_THRESHOLD}")
+                print(f"    [DEBUG]   源 {source} 全部音质均失败（{err_detail}）→ 当前熔断计数={self.source_failures.get(source, 0)}/{self.SOURCE_CIRCUIT_BREAKER_THRESHOLD}")
 
         print(f"    [DEBUG]   所有source+quality组合均失败，返回None")
         return None
@@ -1160,6 +1227,11 @@ def main():
     parser.add_argument('--search-size', type=int, default=10,
                         help='每个音源的最大搜索结果数 (默认: 10，越大越容易匹配但越慢)')
 
+    # 登录凭证参数（CI 环境下载用）
+    parser.add_argument('--netease-cookies', type=str, default='',
+                        help='网易云音乐登录凭证 (JSON 字符串，如 \'{"MUSIC_U":"xxx","__remember_me":"true"}\'；'
+                             '也可通过 NETEASE_COOKIES 环境变量传入，CI 中使用 GitHub Secrets)')
+
     # 排行榜参数
     parser.add_argument('--top-charts', type=str, default='',
                         help='下载指定排行榜（如 qq_hot, netease_new, 热歌榜），使用 --list-top-charts 查看可用榜单')
@@ -1189,6 +1261,15 @@ def main():
 
     def _make_downloader():
         """统一的 SmartDownloader 工厂方法"""
+        # 解析 --netease-cookies：优先 CLI 参数，其次 NETEASE_COOKIES 环境变量
+        netease_cookies_raw = args.netease_cookies or os.environ.get('NETEASE_COOKIES', '')
+        netease_cookies = None
+        if netease_cookies_raw:
+            try:
+                netease_cookies = json.loads(netease_cookies_raw)
+                print(f"[凭证] 已解析 Netease 登录凭证 ({len(netease_cookies)} 个 cookie 字段)")
+            except json.JSONDecodeError as e:
+                print(f"[警告] NETEASE_COOKIES 解析失败（无效 JSON）: {e}，不使用登录凭证")
         return SmartDownloader(
             source=args.source, quality=args.quality,
             max_workers=args.workers, retry_count=args.retry,
@@ -1199,6 +1280,7 @@ def main():
             search_sources=search_sources,
             search_batch_size=args.search_batch_size,
             search_size_per_source=args.search_size,
+            netease_cookies=netease_cookies,
         )
 
     # 收集歌曲

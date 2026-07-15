@@ -155,6 +155,8 @@ jobs:
 
     - name: 运行智能下载引擎
       id: download
+      env:
+        NETEASE_COOKIES: ${{ secrets.NETEASE_COOKIES }}
       run: |
         CMD="python src/smart_downloader.py"
         if [ "${{ github.event.inputs.input_mode }}" = "file" ]; then
