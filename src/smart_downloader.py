@@ -150,6 +150,7 @@ class SmartDownloader:
 
     # 默认音源搜索优先级（串行搜索，搜到即停）
     SOURCE_PRIORITY = [
+        'QQMusicClient',
         'NeteaseMusicClient',
         'KuwoMusicClient',
         'KugouMusicClient',
@@ -570,10 +571,8 @@ class SmartDownloader:
         所有音源并行搜索，取最快返回的匹配结果
         """
         keywords = self._generate_search_keywords(title, artist)
-        total_kw = len(keywords)
 
-        for kw_idx, keyword in enumerate(keywords, 1):
-            print(f"  +-[{kw_idx}/{total_kw}] 搜索 '{keyword}'...")
+        for keyword in keywords:
             result = self._search_single_keyword(keyword, title, artist)
             if result:
                 return result
@@ -581,29 +580,16 @@ class SmartDownloader:
         return None
 
     def _search_single_keyword(self, keyword: str, title: str, artist: str) -> Optional[Dict]:
-        """
-        使用单个关键词在多个音源中**批次并发**搜索。
-        - 将音源按 search_batch_size 分组
-        - 每批内所有音源同时并发搜索
-        - 该批内有音源找到匹配 → 立即返回
-        - 整批都未匹配 → 继续下一批
-        - 所有批次均未匹配 → 返回 None
-        """
         if not self._client_ready():
-            print(f"  |  client 未就绪，无法搜索 '{keyword}'")
             return None
 
         search_sources = self._filter_available_sources(self._get_search_sources())
         if not search_sources:
-            print(f"  |  没有可用音源，无法搜索 '{keyword}'")
             return None
 
         batch_size = self.search_batch_size
-        total_batches = (len(search_sources) + batch_size - 1) // batch_size
-        print(f"  |  批次并发搜索 {len(search_sources)} 个音源 (批次大小: {batch_size})...")
 
         def _search_on_source(source: str) -> Optional[Dict]:
-            """单个音源搜索（用于线程池）"""
             try:
                 sr = self.client.music_clients[source].search(
                     keyword=keyword,
@@ -611,21 +597,16 @@ class SmartDownloader:
                 )
                 if not sr:
                     return None
-                # 调试：记录搜索结果数
-                result_count = len(sr) if hasattr(sr, '__len__') else '?'
                 best = self._find_best_match(sr, title, artist)
                 if best:
                     best['source'] = source
                     return best
-                # 搜索结果不为空但未匹配 → 返回一个标记对象，日志用
-                return {'_search_had_results': True, '_source': source, '_result_count': result_count, '_raw_count': len(sr) if hasattr(sr, '__len__') else 0}
+                return None
             except Exception:
                 return None
 
         for batch_idx in range(0, len(search_sources), batch_size):
             batch = search_sources[batch_idx:batch_idx + batch_size]
-            batch_num = batch_idx // batch_size + 1
-            print(f"  |  ┌─ 批次 {batch_num}/{total_batches}: {', '.join(batch)}")
 
             batch_results: Dict[str, Optional[Dict]] = {}
             with ThreadPoolExecutor(max_workers=len(batch)) as pool:
@@ -637,22 +618,13 @@ class SmartDownloader:
                     except Exception:
                         batch_results[src] = None
 
-            # 检查当前批次每个音源的结果
             for source in batch:
                 res = batch_results.get(source)
                 if res is None:
-                    print(f"  |  ├─ {source}: 搜索出错（API 异常或无返回）")
-                    continue
-                # 标记对象：搜索结果不为空但 _find_best_match 未匹配成功
-                if res.get('_search_had_results'):
-                    count = res.get('_result_count', '?')
-                    print(f"  |  ├─ {source}: 返回 {count} 条结果但未通过匹配过滤（歌名/歌手不一致，将尝试下一个关键词变体）")
                     continue
                 src = res.get('source', source)
-                print(f"  |  ├─ [OK] {src}: 找到匹配 -> {res.get('song_name', '')} - {res.get('singers', '')}")
+                print(f"  {src}: {res.get('song_name', '')} - {res.get('singers', '')}")
                 return res
-
-            print(f"  |  └─ 批次 {batch_num} 结束 (本批无匹配)")
 
         return None
 
