@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-nichijou.cn 每日自动签到脚本
-使用 Playwright 浏览器实现完整签到流程
+nichijou.cn 每日自动签到脚本 (分组版)
+根据 ACCOUNT_GROUP 环境变量签到不同账号组
 """
 import asyncio
 import json
 import os
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -19,12 +18,17 @@ BASE_URL = "https://nichijou.cn"
 RESULTS_DIR = Path(__file__).parent
 RESULTS_FILE = RESULTS_DIR / "checkin_results.json"
 ACCOUNTS_FILE = RESULTS_DIR / "accounts.json"
-LOG_FILE = RESULTS_DIR / "checkin_log.txt"
+
+# 账号分组: A=前4个, B=中间4个, C=后4个
+GROUP_MAP = {
+    "A": [0, 1, 2, 3],
+    "B": [4, 5, 6, 7],
+    "C": [8, 9, 10, 11],
+}
 
 
-async def login_account(page, nick, password):
+async def login_account(page, nick):
     """登录单个账号"""
-    # 打开页面
     await page.goto(f"{BASE_URL}/hall", timeout=60000)
     await page.wait_for_load_state("networkidle", timeout=30000)
     await asyncio.sleep(3)
@@ -36,7 +40,7 @@ async def login_account(page, nick, password):
     }""")
     await asyncio.sleep(1)
 
-    # 输入昵称（使用原生setter绕过React）
+    # 输入昵称
     await page.evaluate("""(nick) => {
         const input = document.querySelector('.loginBoxNickInput');
         if (input) {
@@ -47,7 +51,7 @@ async def login_account(page, nick, password):
     }""", nick)
     await asyncio.sleep(1)
 
-    # 点击登录按钮
+    # 点击登录
     await page.evaluate("""() => {
         const btn = document.querySelector('.loginBoxBtnEnter:not([disabled])');
         if (btn) btn.click();
@@ -56,8 +60,8 @@ async def login_account(page, nick, password):
 
     # 等待登录完成
     for _ in range(10):
-        has_login_box = await page.evaluate("() => !!document.querySelector('.loginBoxCard')")
-        if not has_login_box:
+        has_box = await page.evaluate("() => !!document.querySelector('.loginBoxCard')")
+        if not has_box:
             break
         await asyncio.sleep(1)
 
@@ -75,13 +79,7 @@ async def checkin_account(account):
     from playwright.async_api import async_playwright
 
     nick_full = account.get("nick", "")
-    password = account.get("password", "Pipi20100817")
-
-    # 分离昵称和密码
-    if "@" in nick_full:
-        nick_part = nick_full.split("@")[0]
-    else:
-        nick_part = nick_full
+    nick_part = nick_full.split("@")[0] if "@" in nick_full else nick_full
 
     result = {
         "nick": nick_full,
@@ -102,8 +100,7 @@ async def checkin_account(account):
             )
             page = await context.new_page()
 
-            # 登录
-            login_nick = await login_account(page, nick_part, password)
+            login_nick = await login_account(page, nick_part)
 
             if login_nick and nick_part in login_nick:
                 result["success"] = True
@@ -120,19 +117,20 @@ async def checkin_account(account):
 
 
 async def main():
+    group = os.environ.get("ACCOUNT_GROUP", "A")
     print("=" * 50)
     print("  nichijou.cn 每日自动签到")
+    print(f"  分组: {group}")
     print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
-    if not ACCOUNTS_FILE.exists():
-        print(f"错误: 账号文件不存在: {ACCOUNTS_FILE}")
-        sys.exit(1)
-
     with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
-        accounts = json.load(f)
+        all_accounts = json.load(f)
 
-    print(f"账号数: {len(accounts)}")
+    indices = GROUP_MAP.get(group, [])
+    accounts = [all_accounts[i] for i in indices if i < len(all_accounts)]
+
+    print(f"本组账号数: {len(accounts)}")
 
     results = []
     for i, account in enumerate(accounts, 1):
@@ -140,9 +138,8 @@ async def main():
         print(f"\n[{i}/{len(accounts)}] {nick_display}")
 
         if i > 1:
-            delay = 3
-            print(f"  延迟 {delay}s")
-            await asyncio.sleep(delay)
+            await asyncio.sleep(3)
+            print(f"  延迟 3s")
 
         result = await checkin_account(account)
         results.append(result)
@@ -150,7 +147,6 @@ async def main():
         status = "✅" if result["success"] else "❌"
         print(f"  {status} {result['message']}")
 
-    # 保存结果
     with open(RESULTS_FILE, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 

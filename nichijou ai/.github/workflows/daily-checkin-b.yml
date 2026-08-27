@@ -1,0 +1,56 @@
+name: Daily Checkin Group B
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # UTC 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checkin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+            libcups2 libdrm2 libdbus-1-3 libxkbcommon0 \
+            libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 \
+            libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
+            fonts-liberation
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install chromium
+
+      - name: Run checkin (Group B)
+        working-directory: daily-checkin
+        env:
+          GITHUB_ACTIONS: 'true'
+          ACCOUNT_GROUP: 'B'
+        run: python checkin_group.py
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkin-group-b-${{ github.run_number }}
+          path: |
+            daily-checkin/checkin_results.json
+          retention-days: 30
