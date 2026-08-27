@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-nichijou.cn 每日自动签到脚本 (分组版)
-处理弹窗 + IP检查绕过
+nichijou.cn 每日自动签到脚本 (分组版 + 代理)
+处理弹窗 + 代理绕过IP限制
 """
 import asyncio
 import json
 import os
 import sys
 import time
-import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -27,21 +26,19 @@ GROUP_MAP = {
     "C": [8, 9, 10, 11],
 }
 
+# 代理配置 - 使用本地SOCKS5代理
+PROXY_SERVER = os.environ.get("PROXY_SERVER", "socks5://127.0.0.1:10808")
+
 
 async def dismiss_popups(page):
     """关闭各种弹窗"""
-    # 关闭连续登录/抽奖币弹窗
     await page.evaluate("""() => {
-        // 点击"知道了"、"确定"、"关闭"等按钮
-        document.querySelectorAll('button, a, [class*="close"], [class*="Close"], [class*="btn"]').forEach(el => {
+        // 关闭通知公告
+        document.querySelectorAll('button, a').forEach(el => {
             const text = el.textContent.trim();
-            if (['知道了', '确定', '关闭', '×', 'X', 'ok', 'OK'].includes(text)) {
+            if (['知道了', '确定', '关闭', '×', 'X'].includes(text)) {
                 el.click();
             }
-        });
-        // 移除模态框遮罩
-        document.querySelectorAll('[class*="modal"], [class*="Modal"], [class*="dialog"], [class*="Dialog"]').forEach(el => {
-            if (el.style) el.style.display = 'none';
         });
         // 移除ant-message
         document.querySelectorAll('.ant-message, .ant-message-notice').forEach(el => el.remove());
@@ -68,10 +65,10 @@ async def checkin_account(account):
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
+                proxy={"server": PROXY_SERVER},
                 args=[
                     "--no-sandbox",
                     "--disable-blink-features=AutomationControlled",
-                    "--disable-web-security",
                 ],
             )
             context = await browser.new_context(
@@ -79,21 +76,6 @@ async def checkin_account(account):
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             )
             page = await context.new_page()
-
-            # 拦截并修改请求，绕过IP检查
-            async def route_handler(route):
-                request = route.request
-                # 拦截select_role请求，添加随机UA
-                if 'select_role' in request.url:
-                    headers = {**request.headers}
-                    headers['X-Forwarded-For'] = f"{__import__('random').randint(1,255)}.{__import__('random').randint(0,255)}.{__import__('random').randint(0,255)}.{__import__('random').randint(1,254)}"
-                    await route.continue_(headers=headers)
-                else:
-                    await route.continue_()
-
-            await page.route("**/*", route_handler)
-
-            # 拦截alert/confirm
             page.on("dialog", lambda d: asyncio.ensure_future(d.dismiss()))
 
             # 打开页面
@@ -156,6 +138,7 @@ async def main():
     print("=" * 50)
     print("  nichijou.cn 每日自动签到")
     print(f"  分组: {group}")
+    print(f"  代理: {PROXY_SERVER}")
     print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
