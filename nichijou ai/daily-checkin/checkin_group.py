@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
 nichijou.cn 每日自动签到脚本 (分组版)
-根据 ACCOUNT_GROUP 环境变量签到不同账号组
+处理弹窗 + IP检查绕过
 """
 import asyncio
 import json
 import os
 import sys
+import time
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -19,7 +21,6 @@ RESULTS_DIR = Path(__file__).parent
 RESULTS_FILE = RESULTS_DIR / "checkin_results.json"
 ACCOUNTS_FILE = RESULTS_DIR / "accounts.json"
 
-# 账号分组: A=前4个, B=中间4个, C=后4个
 GROUP_MAP = {
     "A": [0, 1, 2, 3],
     "B": [4, 5, 6, 7],
@@ -27,51 +28,25 @@ GROUP_MAP = {
 }
 
 
-async def login_account(page, nick):
-    """登录单个账号"""
-    await page.goto(f"{BASE_URL}/hall", timeout=60000)
-    await page.wait_for_load_state("networkidle", timeout=30000)
-    await asyncio.sleep(3)
-
-    # 点击头像打开登录框
+async def dismiss_popups(page):
+    """关闭各种弹窗"""
+    # 关闭连续登录/抽奖币弹窗
     await page.evaluate("""() => {
-        const img = document.querySelector('.avatarBoxImg[alt="32"]');
-        if (img) img.click();
+        // 点击"知道了"、"确定"、"关闭"等按钮
+        document.querySelectorAll('button, a, [class*="close"], [class*="Close"], [class*="btn"]').forEach(el => {
+            const text = el.textContent.trim();
+            if (['知道了', '确定', '关闭', '×', 'X', 'ok', 'OK'].includes(text)) {
+                el.click();
+            }
+        });
+        // 移除模态框遮罩
+        document.querySelectorAll('[class*="modal"], [class*="Modal"], [class*="dialog"], [class*="Dialog"]').forEach(el => {
+            if (el.style) el.style.display = 'none';
+        });
+        // 移除ant-message
+        document.querySelectorAll('.ant-message, .ant-message-notice').forEach(el => el.remove());
     }""")
     await asyncio.sleep(1)
-
-    # 输入昵称
-    await page.evaluate("""(nick) => {
-        const input = document.querySelector('.loginBoxNickInput');
-        if (input) {
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-            setter.call(input, nick);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-    }""", nick)
-    await asyncio.sleep(1)
-
-    # 点击登录
-    await page.evaluate("""() => {
-        const btn = document.querySelector('.loginBoxBtnEnter:not([disabled])');
-        if (btn) btn.click();
-    }""")
-    await asyncio.sleep(3)
-
-    # 等待登录完成
-    for _ in range(10):
-        has_box = await page.evaluate("() => !!document.querySelector('.loginBoxCard')")
-        if not has_box:
-            break
-        await asyncio.sleep(1)
-
-    # 获取登录后的昵称
-    login_nick = await page.evaluate("""() => {
-        const m = document.cookie.match(/nick=([^;]+)/);
-        return m ? decodeURIComponent(m[1]) : '';
-    }""")
-
-    return login_nick
 
 
 async def checkin_account(account):
@@ -79,6 +54,7 @@ async def checkin_account(account):
     from playwright.async_api import async_playwright
 
     nick_full = account.get("nick", "")
+    password = account.get("password", "Pipi20100817")
     nick_part = nick_full.split("@")[0] if "@" in nick_full else nick_full
 
     result = {
@@ -92,7 +68,11 @@ async def checkin_account(account):
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-web-security",
+                ],
             )
             context = await browser.new_context(
                 viewport={"width": 1280, "height": 720},
@@ -100,7 +80,62 @@ async def checkin_account(account):
             )
             page = await context.new_page()
 
-            login_nick = await login_account(page, nick_part)
+            # 拦截并修改请求，绕过IP检查
+            async def route_handler(route):
+                request = route.request
+                # 拦截select_role请求，添加随机UA
+                if 'select_role' in request.url:
+                    headers = {**request.headers}
+                    headers['X-Forwarded-For'] = f"{__import__('random').randint(1,255)}.{__import__('random').randint(0,255)}.{__import__('random').randint(0,255)}.{__import__('random').randint(1,254)}"
+                    await route.continue_(headers=headers)
+                else:
+                    await route.continue_()
+
+            await page.route("**/*", route_handler)
+
+            # 拦截alert/confirm
+            page.on("dialog", lambda d: asyncio.ensure_future(d.dismiss()))
+
+            # 打开页面
+            await page.goto(f"{BASE_URL}/hall", timeout=60000)
+            await page.wait_for_load_state("networkidle", timeout=30000)
+            await asyncio.sleep(3)
+
+            # 点击头像
+            await page.evaluate("""() => {
+                const img = document.querySelector('.avatarBoxImg[alt="32"]');
+                if (img) img.click();
+            }""")
+            await asyncio.sleep(1)
+
+            # 输入昵称
+            await page.evaluate("""(nick) => {
+                const input = document.querySelector('.loginBoxNickInput');
+                if (input) {
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                    setter.call(input, nick);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }""", nick_full)
+            await asyncio.sleep(1)
+
+            # 点击登录
+            await page.evaluate("""() => {
+                const btn = document.querySelector('.loginBoxBtnEnter:not([disabled])');
+                if (btn) btn.click();
+            }""")
+            await asyncio.sleep(5)
+
+            # 关闭弹窗
+            await dismiss_popups(page)
+            await asyncio.sleep(2)
+            await dismiss_popups(page)
+
+            # 获取登录状态
+            login_nick = await page.evaluate("""() => {
+                const m = document.cookie.match(/nick=([^;]+)/);
+                return m ? decodeURIComponent(m[1]) : '';
+            }""")
 
             if login_nick and nick_part in login_nick:
                 result["success"] = True
@@ -138,8 +173,7 @@ async def main():
         print(f"\n[{i}/{len(accounts)}] {nick_display}")
 
         if i > 1:
-            await asyncio.sleep(3)
-            print(f"  延迟 3s")
+            await asyncio.sleep(5)
 
         result = await checkin_account(account)
         results.append(result)
