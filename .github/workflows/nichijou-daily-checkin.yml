@@ -1,0 +1,57 @@
+name: Nichijou Daily Checkin
+
+# GitHub 只执行仓库根目录 .github/workflows/ 下的工作流。
+# 旧版 daily-checkin-a/b/c.yml 误放在 "nichijou ai/.github/workflows/" 子目录，
+# 从未被注册运行过。本文件是唯一有效入口。
+on:
+  schedule:
+    # 00:05 北京时间（UTC 16:05）——服务端发币额度在整日切换后最充裕，
+    # 实测 9/15 00:00:08 首发立即到账（zzhx 连签第2/3天）。
+    - cron: '5 16 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checkin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install playwright + chromium (with system deps)
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Run daily login (direct, no local proxy on CI)
+        working-directory: nichijou ai/daily-checkin
+        env:
+          GITHUB_ACTIONS: 'true'
+        run: python -u daily_login.py --no-proxy
+
+      - name: Query balances
+        working-directory: nichijou ai/daily-checkin
+        if: always()
+        run: python -u check_coins.py --all || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nichijou-checkin-${{ github.run_number }}
+          path: |
+            nichijou ai/daily-checkin/checkin_results.json
+            nichijou ai/daily-checkin/coins_balance.json
+            nichijou ai/daily-checkin/daily_state.json
+          retention-days: 30
+          if-no-files-found: ignore
