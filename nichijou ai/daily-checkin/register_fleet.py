@@ -8,8 +8,10 @@ import asyncio
 import json
 import os
 import random
+import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -69,7 +71,13 @@ async def get_sunshine(page, my_nick):
 
 
 async def pick_room(page):
-    """低人气非密码普通房 → (title, id)"""
+    """低人气非密码普通房 → (title, id); --room N 可强制指定"""
+    if "--room" in sys.argv:
+        try:
+            rid = int(sys.argv[sys.argv.index("--room") + 1])
+            return "東雲研究所", rid
+        except Exception:
+            pass
     try:
         rooms = await page.evaluate("""async () => {
             const r = await fetch('https://nichijou.cn/chat_room_server/get_hall_info');
@@ -231,6 +239,19 @@ async def send_msgs(page, count):
     return sent
 
 
+def _port_alive(port, timeout=8):
+    """curl 探测端口是否可用, 返回出口IP或None"""
+    try:
+        r = subprocess.run(
+            ["curl.exe", "-s", "--max-time", str(timeout),
+             "--proxy", f"socks5://127.0.0.1:{port}", "https://api.ipify.org"],
+            capture_output=True, text=True, timeout=timeout + 5)
+        ip = r.stdout.strip()
+        return ip if ip and ip.count(".") == 3 else None
+    except Exception:
+        return None
+
+
 async def process_account(p, nick, proxy, idx):
     tag = f"[{idx+1}/{len(NEW_ACCOUNTS)}] {nick}"
     print(f"\n===== {tag} via {proxy} =====", flush=True)
@@ -369,13 +390,18 @@ async def main():
         print(f"重试失败账号: {nicks}", flush=True)
     results = list(prev)
     used = {r.get("proxy") for r in results if r.get("proxy")}
+    # 并发预检端口存活(死节点直接跳过, 避免每个号白耗 3-4 分钟)
+    cands = [x for x in fleet if f"socks5://127.0.0.1:{x['port']}" not in used]
+    print(f"预检 {len(cands)} 个候选端口…", flush=True)
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        alive = [x for x in ex.map(
+            lambda x: x if _port_alive(x["port"]) else None, cands) if x]
+    print(f"存活 {len(alive)}/{len(cands)}", flush=True)
+    if not alive:
+        alive = fleet
     async with async_playwright() as p:
         for idx, nick in enumerate(nicks):
-            m = next((x for x in fleet
-                      if f"socks5://127.0.0.1:{x['port']}" not in used), None)
-            if m is None:
-                m = fleet[idx % len(fleet)]   # 全用过就循环复用
-            used.add(f"socks5://127.0.0.1:{m['port']}")
+            m = alive[idx % len(alive)]
             proxy = f"socks5://127.0.0.1:{m['port']}"
             print(f"  使用端口 {m['port']} ({m.get('name','')})", flush=True)
             try:
