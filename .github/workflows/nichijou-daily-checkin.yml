@@ -5,8 +5,9 @@ name: Nichijou Daily Checkin
 # 从未被注册运行过。本文件是唯一有效入口。
 on:
   schedule:
-    # 00:05 北京时间（UTC 16:05）——服务端发币额度在整日切换后最充裕，
-    # 实测 9/15 00:00:08 首发立即到账（zzhx 连签第2/3天）。
+    # 00:05 北京时间（UTC 16:05）——服务端发币额度按【出口IP】每日重置(每IP≈1枚/日)，
+    # 整日切换后最充裕。runner IP 每次大概率是全新 Azure IP，主号排第一必拿当日额度。
+    # 实测 9/15 22:52 最中幻想从 runner IP 20.98.142.193 领到"连续第1天 +1币"。
     - cron: '5 16 * * *'
   workflow_dispatch:
 
@@ -33,16 +34,16 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
-      - name: Run daily login (direct, no local proxy on CI)
+      - name: Run daily login (main account only, direct)
         working-directory: nichijou ai/daily-checkin
         env:
           GITHUB_ACTIONS: 'true'
-        run: python -u daily_login.py --no-proxy
+        run: python -u daily_login.py --no-proxy --only "最中幻想"
 
-      - name: Query balances
+      - name: Query balance
         working-directory: nichijou ai/daily-checkin
         if: always()
-        run: python -u check_coins.py --all || true
+        run: python -u check_coins.py --no-proxy --nick "最中幻想@Pipi20100817" || true
 
       - name: Upload results
         if: always()
