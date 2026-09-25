@@ -1,0 +1,9 @@
+# 本地密钥与运行产物, 禁止入库
+subs_url.txt
+subs_cache.json
+fleet_ports.json
+xray/config_fleet.json
+daily_state.json
+coins_balance.json
+daily_debug/
+*.log

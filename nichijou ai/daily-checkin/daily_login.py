@@ -181,14 +181,30 @@ async def detect_egress_ip(page):
     return None
 
 
+def fleet_ip_map():
+    """本地 xray 节点舰队(xray_fleet.py 生成, 2h 内有效): {socks串: 出口IP}"""
+    pf = HERE / "fleet_ports.json"
+    try:
+        if pf.exists() and (time.time() - pf.stat().st_mtime) < 2 * 3600:
+            data = json.loads(pf.read_text(encoding="utf-8"))
+            return {f"socks5://127.0.0.1:{m['port']}": m["ip"]
+                    for m in data if m.get("ip")}
+    except Exception:
+        pass
+    return {}
+
+
 def load_proxy_pool():
-    """代理池: 环境变量 PROXY_POOL(逗号分隔) > proxies.txt(每行一个) > 单代理候选"""
+    """代理池: 节点舰队 > 环境变量 PROXY_POOL(逗号分隔) > proxies.txt(每行一个)"""
     env = os.environ.get("PROXY_POOL")
     pool = [x.strip() for x in env.split(",") if x.strip()] if env else []
     pf = HERE / "proxies.txt"
     if not pool and pf.exists():
         pool = [ln.strip() for ln in pf.read_text(encoding="utf-8").splitlines()
                 if ln.strip() and not ln.startswith("#")]
+    fleet = list(fleet_ip_map())
+    if fleet:
+        pool = fleet + [p for p in pool if p not in fleet]
     return pool
 
 
@@ -535,6 +551,8 @@ async def main():
             for pr in pool:
                 if pr is None:
                     continue
+                if pr in _fim:   # 舰队端口已 curl 探测过出口IP, 免浏览器复检
+                    continue
                 try:
                     browser = await p.chromium.launch(
                         headless=True, proxy={"server": pr},
@@ -566,13 +584,20 @@ async def main():
                     if not (state.get(a["nick"], {}).get("date") == today
                             and state.get(a["nick"], {}).get("status") == "rewarded")
                     or args.force]
+    _fim = fleet_ip_map()
+    for _p, _ip in _fim.items():
+        if _p in pool:
+            remember_ip(_p, _ip)   # 舰队 curl 已探测过, 直接入台账
     if pending_accs:
         await preflight_pool()
 
     print("=" * 60)
     print("  nichijou.cn 每日登录（完善版）")
     print(f"  组: {args.group} | 账号数: {len(accounts)}")
-    print(f"  代理池: {[x or '直连' for x in pool]} | 今日发放IP台账: "
+    _pool_show = [x or "直连" for x in pool]
+    if len(_pool_show) > 6:
+        _pool_show = _pool_show[:6] + [f"…共{len(_pool_show)}个"]
+    print(f"  代理池: {_pool_show} | 今日发放IP台账: "
           + (", ".join(f"{ip}({len(v)})" for ip, v in granted_ips.items()) or "无"))
     print("=" * 60)
 
@@ -584,7 +609,10 @@ async def main():
     def tries_of(a):
         s = state.get(a["nick"], {})
         return s.get("tries", 0) if s.get("date") == today else 0
-    accounts = sorted(accounts, key=tries_of)
+    # 主号永远第一; 其余按尝试次数少者优先
+    accounts = sorted(accounts,
+                      key=lambda a: (0 if a["nick"].startswith("最中幻想") else 1,
+                                     tries_of(a)))
     for i, acc in enumerate(accounts, 1):
         nick_full = acc["nick"]
         password = acc.get("password", "")

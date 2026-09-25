@@ -69,6 +69,34 @@ window.__sendComp = async (s, fmt) => {
 """
 
 
+def _proxy_alive(proxy_server, timeout=8):
+    """curl 轻探测理解代理通路(不起浏览器)"""
+    import subprocess
+    args = ["curl.exe", "-s", "-o", "NUL", "-w", "%{http_code}",
+            "--connect-timeout", "5", "--max-time", str(timeout),
+            "https://nichijou.cn/hall"]
+    if proxy_server:
+        args += ["--proxy", proxy_server]
+    try:
+        out = subprocess.run(args, capture_output=True, text=True,
+                             timeout=timeout + 4).stdout.strip()
+        return out.startswith("2")
+    except Exception:
+        return False
+
+
+async def preflight_proxy_pool(pool):
+    """剔除已死的代理(如夜间下线的 xray 10818)，避免账号轮流撞死路。"""
+    alive = []
+    for pr in pool:
+        ok = await asyncio.to_thread(_proxy_alive, pr)
+        print(f"  预探测 {pr or '直连'}: {'OK' if ok else '不通 → 移出池'}",
+              flush=True)
+        if ok:
+            alive.append(pr)
+    return alive or [None]
+
+
 async def query_one(nick_full: str, password_unused, proxy_server, headed: bool):
     from playwright.async_api import async_playwright
     out = {"nick": nick_full, "time": datetime.now().isoformat(timespec="seconds"),
@@ -509,6 +537,8 @@ async def main():
     pool = load_proxy_pool() or [pick_proxy(True)] or [None]
     if args.no_proxy:
         pool = [None]
+    else:
+        pool = await preflight_proxy_pool(pool)
 
     if args.all:
         accounts = [a["nick"] for a in json.loads(ACCOUNTS_FILE.read_text(encoding="utf-8"))]
