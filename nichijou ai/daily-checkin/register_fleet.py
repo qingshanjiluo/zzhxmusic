@@ -299,6 +299,13 @@ async def process_account(p, nick, proxy, idx):
         res["guest_nick"] = my_nick
         res["sunshine"] = sun0
 
+        # 登录后 WS 长时间连不上 = 该昵称多半已被他人注册(游客会话被服务端踢),
+        # 快速失败, 不浪费 10 分钟刷阳光
+        if not await wait_connected(page, timeout=20):
+            res["status"] = "no_socket_nick_taken?"
+            print("  [快速失败] 登录后 WS 始终未连上 → 昵称疑似已被占用", flush=True)
+            return res
+
         room_title, room_id = await pick_room(page)
         print(f"  刷阳光 → {room_title}#{room_id}", flush=True)
         total, rounds, fails = 0, 0, 0
@@ -314,8 +321,13 @@ async def process_account(p, nick, proxy, idx):
             fails = 0
             total += await send_msgs(page, 5)
             rounds += 1
+            prev_sun = sun0
             sun0 = await get_sunshine(page, my_nick)
             print(f"    round{rounds}: sent={total} sun={sun0}", flush=True)
+            if sun0 < prev_sun and prev_sun >= 5:
+                res["status"] = "session_killed"
+                print("  [快速失败] 阳光被清零 = 会话被服务端踢掉 → 该昵称不可用", flush=True)
+                return res
             if sun0 < SUN_TARGET:
                 await asyncio.sleep(random.uniform(8, 15))
         res["sunshine"] = sun0
@@ -380,6 +392,10 @@ async def process_account(p, nick, proxy, idx):
 
 async def main():
     fleet = load_fleet()
+    if "--asian" in sys.argv:
+        keys = ("香港", "日本", "新加坡", "台湾", "美国")
+        fleet = [x for x in fleet if any(k in x.get("name", "") for k in keys)]
+        print(f"--asian: 仅用港/日/新/台/美节点 → {len(fleet)} 个", flush=True)
     print(f"舰队节点: {len(fleet)} 个可用", flush=True)
     nicks = list(NEW_ACCOUNTS)
     prev = []

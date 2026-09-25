@@ -182,13 +182,34 @@ async def detect_egress_ip(page):
 
 
 def fleet_ip_map():
-    """本地 xray 节点舰队(xray_fleet.py 生成, 2h 内有效): {socks串: 出口IP}"""
+    """本地 xray 节点舰队(xray_fleet.py 生成): {socks串: 出口IP}
+    文件超过 2h 不再直接丢弃 —— 先抽查端口是否仍开着(xray 在跑), 在跑就继续用
+    (今天曾因文件过期静默降级到失效的 10808, 导致整轮失败)。"""
     pf = HERE / "fleet_ports.json"
     try:
-        if pf.exists() and (time.time() - pf.stat().st_mtime) < 2 * 3600:
-            data = json.loads(pf.read_text(encoding="utf-8"))
-            return {f"socks5://127.0.0.1:{m['port']}": m["ip"]
-                    for m in data if m.get("ip")}
+        if not pf.exists():
+            return {}
+        data = json.loads(pf.read_text(encoding="utf-8"))
+        mp = {f"socks5://127.0.0.1:{m['port']}": m["ip"]
+              for m in data if m.get("ip")}
+        if not mp:
+            return {}
+        if (time.time() - pf.stat().st_mtime) < 2 * 3600:
+            return mp
+        # 过期: 抽查 5 个端口, 有 3 个能连上就当舰队还活着
+        sample = list(mp)[:5]
+        ok = 0
+        for p in sample:
+            try:
+                port = int(p.rsplit(":", 1)[1])
+                s = socket.create_connection(("127.0.0.1", port), timeout=1.5)
+                s.close()
+                ok += 1
+            except Exception:
+                pass
+        if ok >= 3:
+            os.utime(pf, None)   # 刷新时间戳, 避免重复抽样
+            return mp
     except Exception:
         pass
     return {}
